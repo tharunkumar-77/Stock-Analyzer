@@ -15,7 +15,6 @@
 
     <!-- Search Section -->
     <h2>Search Investment</h2>
-
     <form action="/search" method="POST">
         <label for="stock">Stock / ETF / Fund / Index:</label><br>
         <input
@@ -35,16 +34,18 @@
     <!-- Stock Information -->
 <h2>Investment Information</h2>
 <div id="stock-info">
-{% if stock %}
-    <p>Searched Investment: {{ stock }}</p>
+
+{% if error %}
+    <p>{{ error }}</p>
+{% elif stock %}
+    <p>Name: {{ name }}</p>
+    <p>Ticker: {{ symbol }}</p>
+    <p>Current Price: {{ price }}</p>
+    <p>Asset Type: {{ asset_type }}</p>
 {% else %}
-    <p>Search a stock, ETF, fund, or index.</p>
+    <p>Search a stock, ETF, fund or index.</p>
 {% endif %}
 
-    <p>Name: --</p>
-    <p>Ticker: --</p>
-    <p>Current Price: --</p>
-    <p>Asset Type: --</p>
 </div>
 
 
