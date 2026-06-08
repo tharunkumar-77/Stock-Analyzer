@@ -55,9 +55,13 @@
     <!-- Explanation Section -->
     <h2>Explain This Investment</h2>
     <div id="explanation">
-        <p>
-            Beginner-friendly explanation will appear here.
-        </p>
+        {%if explanation%}
+
+            <p>{{explanation}}</p>
+        {%else%}
+            <p>The stock has no data available</p>
+
+        {%endif%}
     </div>
     <hr>
 
