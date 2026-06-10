@@ -67,7 +67,7 @@
 
 
 
-<!--Historical Performance -->
+<!--    Historical Performance -->
 <h2>Historical Performance</h2>
 
 <div id="default-performance">
@@ -91,57 +91,25 @@
 
 
 
-<!-- Custom Performance Analysis -->
-<h2>Custom Performance Analysis</h2>
-<form action="/duration" method="POST">
-    <label for="start_year">
-        Start Year:
+<hr>
+
+<!-- Investment Calculator -->
+<h2>Investment Calculator</h2>
+
+<form action="/calculator" method="POST">
+
+    <label for="stock_calc">
+        Stock / ETF / Fund:
     </label><br>
+
     <input
-        type="number"
-        id="start_year"
-        name="start_year"
-        min="1900"
-        max="2100"
-        placeholder="1977"
+        type="text"
+        id="stock_calc"
+        name="stock"
+        placeholder="AAPL, Apple"
         required>
+
     <br><br>
-
-    <label for="end_year">
-        End Year:
-    </label><br>
-
-    <input
-        type="number"
-        id="end_year"
-        name="end_year"
-        min="1900"
-        max="2100"
-        placeholder="1987"
-        required>
-   <br><br>
-
-    <button type="submit">
-        Analyze Performance
-    </button>
-</form>
-
-<div id="custom-performance">
-    <p>
-        Performance between the selected years
-        will be displayed here.
-    </p>
-</div>
-    <hr>
-
-
-
-
-
-    <!-- Investment Calculator -->
-    <h2>Investment Calculator</h2>
-
-    <form action="/calculator" method="POST">
 
     <label for="amount">
         Investment Amount (₹):
@@ -157,28 +125,66 @@
 
     <br><br>
 
+    <label for="date">
+        Investment Date:
+    </label><br>
+
+    <input
+        type="date"
+        id="date"
+        name="date"
+        required>
+
+    <br><br>
+
     <button type="submit">
-        Calculate
+        Calculate Investment
     </button>
 
-    </form>
+</form>
 
-    <div id="investment-result">
+<br>
 
-        <p>Investment Amount: --</p>
+<div id="investment-result">
 
-        <p>Current Value: --</p>
+{% if investment_amount %}
 
-        <p>Profit / Loss: --</p>
+    <p>
+        Investment Amount:
+        ₹{{ investment_amount }}
+    </p>
 
-        <p>
-            Growth chart will appear here.
-        </p>
+    <p>
+        Purchase Price:
+        {{ buy_price }}
+    </p>
 
-    </div>
+    <p>
+        Current Price:
+        {{ current_price }}
+    </p>
 
-    <hr>
+    <p>
+        Current Value:
+        ₹{{ current_value }}
+    </p>
 
+    <p>
+        Profit / Loss:
+        ₹{{ profit }}
+    </p>
+
+{% else %}
+
+    <p>
+        Enter an investment amount and date to see how your investment would have performed.
+    </p>
+
+{% endif %}
+
+</div>
+
+<hr>
     
 
 </body>

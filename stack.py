@@ -99,6 +99,70 @@ def search():
             "index.html",
             error="Invalid symbol or no Data"
         )
+    
+@app.route("/calculator", methods=["POST"])
+def calculator():
+
+    stock_df = pd.read_csv("stocks.csv")
+
+    stock = request.form["stock"].strip()
+
+    amount = float(request.form["amount"])
+
+    date = request.form["date"]
+
+    matched = stock_df[
+        stock_df["name"].str.lower() == stock.lower()
+    ]
+
+    if not matched.empty:
+        stock = matched.iloc[0]["ticker"]
+
+    try:
+
+        ticker = yf.Ticker(stock)
+
+        history = ticker.history(start=date)
+
+        if history.empty:
+            return render_template(
+                "index.html",
+                error="No historical data available."
+            )
+
+        buy_price = history["Close"].iloc[0]
+
+        current_price = history["Close"].iloc[-1]
+
+        shares = amount / buy_price
+
+        current_value = round(
+            shares * current_price,
+            2
+        )
+
+        profit = round(
+            current_value - amount,
+            2
+        )
+
+        return render_template(
+            "index.html",
+            investment_amount=amount,
+            buy_price=round(buy_price, 2),
+            current_price=round(current_price, 2),
+            current_value=current_value,
+            profit=profit
+        )
+
+    except Exception:
+
+        return render_template(
+            "index.html",
+            error="Calculation failed."
+        )
+    
+
 
 
 if __name__ == "__main__":
