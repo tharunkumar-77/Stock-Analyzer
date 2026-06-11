@@ -40,7 +40,6 @@ def search():
     try:
 
         ticker = yf.Ticker(stock)
-
         info = ticker.info
 
         history_1y = ticker.history(period="1y")
@@ -52,31 +51,16 @@ def search():
         return_5y = round(calculate_return(history_5y), 2)
 
         name = (
-            info.get("longName")
-            or info.get("shortName")
-            or "Not Available"
-        )
+            info.get("longName") or info.get("shortName")or "Not Available")
 
         symbol = (
-            info.get("symbol")
-            or stock
-        )
+            info.get("symbol") or stock or "Not Available")
 
-        price = (
-            info.get("currentPrice")
-            or info.get("regularMarketPrice")
-            or "Not Available"
-        )
+        price = (info.get("currentPrice") or info.get("regularMarketPrice")or "Not Available")
 
-        asset_type = (
-            info.get("quoteType")
-            or "Not Available"
-        )
+        asset_type = (info.get("quoteType")or "Not Available")
 
-        explanation = info.get(
-            "longBusinessSummary",
-            "No Data Available"
-        )
+        explanation = info.get("longBusinessSummary","No Data Available")
 
         if explanation != "No Data Available":
             explanation = explanation[:500] + "..."
@@ -100,67 +84,8 @@ def search():
             error="Invalid symbol or no Data"
         )
     
-@app.route("/calculator", methods=["POST"])
-def calculator():
 
-    stock_df = pd.read_csv("stocks.csv")
-
-    stock = request.form["stock"].strip()
-
-    amount = float(request.form["amount"])
-
-    date = request.form["date"]
-
-    matched = stock_df[
-        stock_df["name"].str.lower() == stock.lower()
-    ]
-
-    if not matched.empty:
-        stock = matched.iloc[0]["ticker"]
-
-    try:
-
-        ticker = yf.Ticker(stock)
-
-        history = ticker.history(start=date)
-
-        if history.empty:
-            return render_template(
-                "index.html",
-                error="No historical data available."
-            )
-
-        buy_price = history["Close"].iloc[0]
-
-        current_price = history["Close"].iloc[-1]
-
-        shares = amount / buy_price
-
-        current_value = round(
-            shares * current_price,
-            2
-        )
-
-        profit = round(
-            current_value - amount,
-            2
-        )
-
-        return render_template(
-            "index.html",
-            investment_amount=amount,
-            buy_price=round(buy_price, 2),
-            current_price=round(current_price, 2),
-            current_value=current_value,
-            profit=profit
-        )
-
-    except Exception:
-
-        return render_template(
-            "index.html",
-            error="Calculation failed."
-        )
+    
     
 
 
