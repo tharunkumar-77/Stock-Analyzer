@@ -15,6 +15,40 @@ def calculate_return(history):
 
     return ((end_price - start_price) / start_price) * 100
 
+def get_detail(stock):
+
+    try:
+        ticker = yf.Ticker(stock)
+        info = ticker.info
+
+        name = (
+            info.get("longName") or info.get("shortName")or "Not Available")
+
+        symbol = (
+            info.get("symbol") or stock or "Not Available")
+
+        price = (info.get("currentPrice") or info.get("regularMarketPrice")or "Not Available")
+
+        asset_type = (info.get("quoteType")or "Not Available")
+
+        explanation = info.get("longBusinessSummary","No Data Available")
+
+        if explanation != "No Data Available":
+            explanation = explanation[:500] + "..."
+
+        return {
+            "name": name,
+            "symbol": symbol,
+            "price": price,
+            "asset_type": asset_type,
+            "explanation": explanation
+        }
+
+    except Exception:
+        return {
+            "error": "Invalid symbol or no Data"
+        }
+
 
 @app.route("/")
 def home():
