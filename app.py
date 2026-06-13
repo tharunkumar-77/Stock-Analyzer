@@ -1,4 +1,11 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request,render_template
+import yfinance as yf
+import pandas as pd
+
+app=Flask(__name__)
 
 
-if 
+def get_detail(stock):
+
+    
+
