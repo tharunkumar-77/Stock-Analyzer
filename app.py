@@ -85,7 +85,8 @@ def search():
 
 @app.route("/historical_calculator",methods=["POST"])
 def historical_calulator():
-
+    
+    stock=request.form["stock"]
     details = get_detail(stock)
     stock=request.form["stock"]
     amount=float(request.form["amount"])

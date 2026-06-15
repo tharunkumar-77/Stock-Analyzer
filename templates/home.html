@@ -21,6 +21,7 @@
             type="text"
             id="stock"
             name="stock"
+            value="{{stock if stock else '' }}"
             placeholder="NIFTY50, Apple"
             required>
         <br><br>
@@ -106,23 +107,24 @@
                 <input type="hidden" name="stock" value="{{ symbol }}">
 
                 <label>Investment Amount (₹)</label><br>
-                <input type="number" name="amount" min=0 required>
+                <input type="number" name="amount" min=0  value="{{amount if amount else ''}}">
                 <br><br>
 
                 <label>Start Date</label><br>
-                <input type="date" name="start_date" required>
+                <input type="date" name="start_date" value="{{start_date if start_date else ''}}" required>
                 <br><br>
 
                 <label>End Date</label><br>
-                <input type="date" name="end_date" required>
+                <input type="date" name="end_date" value="{{end_date if end_date else ''}}" required>
                 <br><br>
 
-                <label for="buy_price">Buy price : {{buy_price}}</label>
+                <label for="buy_price">Buy price : {{buy_price}}</label><br>
+                <br>
 
                 <label for="sell_price">Sell price : {{sell_price}}</label>
 
                 <div id="historical_result">
-                    <p>Profit / Loss: ₹{{ returns }}</p>
+                    <p>Profit / Loss :₹{{ returns }}</p>
                 </div>
 
                 <button type="submit">
