@@ -44,7 +44,7 @@ def get_detail(stock):
 
         explanation=info.get("longBusinessSummary") or "Not Available"
         if explanation != "Not Available":
-            explanation=explanation[:10] +"..."
+            explanation=explanation[:330] +"..."
 
         history_1y=ticker.history(period="1y")
         history_3y=ticker.history(period="3y")
@@ -85,7 +85,37 @@ def search():
 
 @app.route("/historical_calculator",methods=["POST"])
 def historical_calulator():
-    return
+
+    details = get_detail(stock)
+    stock=request.form["stock"]
+    amount=float(request.form["amount"])
+    start_date=request.form["start_date"]
+    end_date=request.form["end_date"]
+
+    ticker=yf.Ticker(stock)
+    history=ticker.history(start=start_date,end=end_date)
+
+    if history.empty:
+        return render_template("home.html",returns="No past Data found for the given date")
+    
+    buy_price=history["Close"].iloc[0]
+    sell_price=history["Close"].iloc[-1]
+
+    shares=amount/buy_price
+    final_returns=round(shares*sell_price,2)
+    profit=round(final_returns-amount,2)
+
+
+    return render_template(
+    "home.html",
+    **details,
+    amount=amount,
+    start_date=start_date,
+    end_date=end_date,
+    buy_price=round(buy_price, 2),
+    sell_price=round(sell_price, 2),
+    returns=profit
+)
 
 if __name__ == "__main__":
     app.run(debug=True,port=5001)

@@ -103,6 +103,8 @@
 
             <form action="/historical_calculator" method="POST">
 
+                <input type="hidden" name="stock" value="{{ symbol }}">
+
                 <label>Investment Amount (₹)</label><br>
                 <input type="number" name="amount" min=0 required>
                 <br><br>
@@ -114,6 +116,14 @@
                 <label>End Date</label><br>
                 <input type="date" name="end_date" required>
                 <br><br>
+
+                <label for="buy_price">Buy price : {{buy_price}}</label>
+
+                <label for="sell_price">Sell price : {{sell_price}}</label>
+
+                <div id="historical_result">
+                    <p>Profit / Loss: ₹{{ returns }}</p>
+                </div>
 
                 <button type="submit">
                     Calculate Historical Return
