@@ -12,8 +12,6 @@
     <hr>
 
 
-
-    <!-- Search Section -->
     <h2>Search Investment</h2>
     <form action="/search" method="POST">
         <label for="stock">Stock / ETF / Fund / Index:</label><br>
@@ -21,7 +19,7 @@
             type="text"
             id="stock"
             name="stock"
-            value="{{stock if stock else '' }}"
+            value="{{ stock if stock else '' }}"
             placeholder="NIFTY50, Apple"
             required>
         <br><br>
@@ -30,152 +28,132 @@
     <hr>
 
 
+    <h2>Investment Information</h2>
+    <div id="stock-info">
+        {% if error %}
+            <p>{{ error }}</p>
+        {% elif name %}
+            <p>Name: {{ name }}</p>
+            <p>Ticker: {{ symbol }}</p>
+            <p>Current Price: {{ price }}</p>
+            <p>Asset Type: {{ asset_type }}</p>
+        {% else %}
+            <p>Search a stock, ETF, fund or index.</p>
+        {% endif %}
+    </div>
 
 
-<!-- Stock Information -->
-<h2>Investment Information</h2>
-<div id="stock-info">
-
-{% if error %}
-    <p>{{ error }}</p>
-{% elif name %}
-    <p>Name: {{ name }}</p>
-    <p>Ticker: {{ symbol }}</p>
-    <p>Current Price: {{ price }}</p>
-    <p>Asset Type: {{ asset_type }}</p>
-{% else %}
-    <p>Search a stock, ETF, fund or index.</p>
-{% endif %}
-
-</div>
-
-
-
-
-    <!-- Explanation Section -->
     <h2>Explain This Investment</h2>
     <div id="explanation">
-        {%if explanation%}
-
-            <p>{{explanation}}</p>
-        {%else%}
+        {% if explanation %}
+            <p>{{ explanation }}</p>
+        {% else %}
             <p>The stock has no data available</p>
-
-        {%endif%}
+        {% endif %}
     </div>
     <hr>
 
 
+    <h2>Historical Performance</h2>
+    <div id="default-performance">
+        {% if return_1y %}
 
-<!-- Historical Performance -->
-<h2>Historical Performance</h2>
-<div id="default-performance">
-    {% if return_1y %}
-        <p>1 Year Return: {{ return_1y }}%</p>
-        <p>3 Year Return: {{ return_3y }}%</p>
-        <p>5 Year Return: {{ return_5y }}%</p>
-    {% else %}
-        <p>Performance will appear here.</p>
-    {% endif %}
+            <p>1 Year Return: {{ return_1y }}%</p>
+            {% if chart_1y %}
+                <img src="data:image/png;base64,{{ chart_1y }}" alt="1 Year Chart" style="width:100%; max-width:600px;">
+            {% endif %}
 
-    
-    {% if price_chart %}
-        <h3>1-Year Price Chart</h3>
-        <img src="data:image/png;base64,{{ price_chart }}" alt="Price History Chart" style="width:100%; max-width:700px;">
-    {% endif %}
-</div>
-<hr>
+            <p>3 Year Return: {{ return_3y }}%</p>
+            {% if chart_3y %}
+                <img src="data:image/png;base64,{{ chart_3y }}" alt="3 Year Chart" style="width:100%; max-width:600px;">
+            {% endif %}
 
+            <p>5 Year Return: {{ return_5y }}%</p>
+            {% if chart_5y %}
+                <img src="data:image/png;base64,{{ chart_5y }}" alt="5 Year Chart" style="width:100%; max-width:600px;">
+            {% endif %}
 
-
-
-<!-- Investment Calculator -->
-<h2>Investment Calculator</h2>
-
-<table width="100%">
-    <tr>
-        <!-- Historical Calculator -->
-        <td width="50%" valign="top">
-
-            <h3>Calculate Past Returns</h3>
-
-            <form action="/historical_calculator" method="POST">
-
-                <input type="hidden" name="stock" value="{{ symbol }}">
-
-                <label>Investment Amount (₹)</label><br>
-                <input type="number" name="amount" min=0  value="{{amount if amount else ''}}">
-                <br><br>
-
-                <label>Start Date</label><br>
-                <input type="date" name="start_date" value="{{start_date if start_date else ''}}" required>
-                <br><br>
-
-                <label>End Date</label><br>
-                <input type="date" name="end_date" value="{{end_date if end_date else ''}}" required>
-                <br><br>
-
-                <label for="buy_price">Buy price : {{buy_price}}</label><br>
-                <br>
-
-                <label for="sell_price">Sell price : {{sell_price}}</label>
-
-                
-    <div id="historical_result">
-        <p>Profit / Loss: ₹{{ returns }}</p>
+        {% else %}
+            <p>Performance will appear here.</p>
+        {% endif %}
     </div>
-
-    {% if growth_chart %}
-        <h4>Investment Growth Chart</h4>
-        <img src="data:image/png;base64,{{ growth_chart }}" alt="Investment Growth Chart" style="width:100%; max-width:700px;">
-    {% endif %}
-
-                
-
-                <button type="submit">
-                    Calculate Historical Return
-                </button>
-
-            </form>
-
-        </td>
-
-        <!-- Future Calculator -->
-        <td width="50%" valign="top">
-
-            <h3>Calculate Future Returns (ML Estimate)</h3>
-
-            <form action="/future_prediction" method="POST">
-
-                <label>Investment Amount (₹)</label><br>
-                <input type="number" name="amount" required>
-                <br><br>
-
-                <label>Prediction Date</label><br>
-                <input type="date" name="future_date" required>
-                <br><br>
-
-                <button type="submit">
-                    Predict Future Value
-                </button>
-
-            </form>
-
-            <p>
-                <small>
-                    Predictions are estimates generated by a machine learning
-                    model and should not be treated as guaranteed returns.
-                </small>
-            </p>
-
-        </td>
-    </tr>
-</table>
-
-<hr>
+    <hr>
 
 
-    
+    <h2>Investment Calculator</h2>
+
+    <table width="100%">
+        <tr>
+            <td width="50%" valign="top">
+
+                <h3>Calculate Past Returns</h3>
+
+                <form action="/historical_calculator" method="POST">
+
+                    <input type="hidden" name="stock" value="{{ symbol }}">
+
+                    <label>Investment Amount (₹)</label><br>
+                    <input type="number" name="amount" min=0 value="{{ amount if amount else '' }}">
+                    <br><br>
+
+                    <label>Start Date</label><br>
+                    <input type="date" name="start_date" value="{{ start_date if start_date else '' }}" required>
+                    <br><br>
+
+                    <label>End Date</label><br>
+                    <input type="date" name="end_date" value="{{ end_date if end_date else '' }}" required>
+                    <br><br>
+
+                    <label>Buy price : {{ buy_price }}</label><br>
+                    <br>
+                    <label>Sell price : {{ sell_price }}</label>
+
+                    <div id="historical_result">
+                        <p>Profit / Loss : ₹{{ returns }}</p>
+                    </div>
+
+                    {% if growth_chart %}
+                        <h4>Investment Growth Chart</h4>
+                        <img src="data:image/png;base64,{{ growth_chart }}" alt="Investment Growth Chart" style="width:100%; max-width:600px;">
+                    {% endif %}
+
+                    <br>
+                    <button type="submit">Calculate Historical Return</button>
+
+                </form>
+
+            </td>
+
+            <td width="50%" valign="top">
+
+                <h3>Calculate Future Returns (ML Estimate)</h3>
+
+                <form action="/future_prediction" method="POST">
+
+                    <label>Investment Amount (₹)</label><br>
+                    <input type="number" name="amount" required>
+                    <br><br>
+
+                    <label>Prediction Date</label><br>
+                    <input type="date" name="future_date" required>
+                    <br><br>
+
+                    <button type="submit">Predict Future Value</button>
+
+                </form>
+
+                <p>
+                    <small>
+                        Predictions are estimates generated by a machine learning
+                        model and should not be treated as guaranteed returns.
+                    </small>
+                </p>
+
+            </td>
+        </tr>
+    </table>
+
+    <hr>
 
 </body>
 </html>
