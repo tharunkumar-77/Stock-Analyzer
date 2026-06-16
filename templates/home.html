@@ -67,25 +67,22 @@
 
 
 
-<!--Historical Performance -->
+<!-- Historical Performance -->
 <h2>Historical Performance</h2>
-
 <div id="default-performance">
+    {% if return_1y %}
+        <p>1 Year Return: {{ return_1y }}%</p>
+        <p>3 Year Return: {{ return_3y }}%</p>
+        <p>5 Year Return: {{ return_5y }}%</p>
+    {% else %}
+        <p>Performance will appear here.</p>
+    {% endif %}
 
-{% if return_1y is defined %}
-
-<p>1 Year Return: {{ return_1y }}%</p>
-<p>3 Year Return: {{ return_3y }}%</p>
-<p>5 Year Return: {{ return_5y }}%</p>
-
-{% else %}
-
-<p>
-    Performance will appear here.
-</p>
-
-{% endif %}
-
+    
+    {% if price_chart %}
+        <h3>1-Year Price Chart</h3>
+        <img src="data:image/png;base64,{{ price_chart }}" alt="Price History Chart" style="width:100%; max-width:700px;">
+    {% endif %}
 </div>
 <hr>
 
@@ -123,9 +120,17 @@
 
                 <label for="sell_price">Sell price : {{sell_price}}</label>
 
-                <div id="historical_result">
-                    <p>Profit / Loss :₹{{ returns }}</p>
-                </div>
+                
+    <div id="historical_result">
+        <p>Profit / Loss: ₹{{ returns }}</p>
+    </div>
+
+    {% if growth_chart %}
+        <h4>Investment Growth Chart</h4>
+        <img src="data:image/png;base64,{{ growth_chart }}" alt="Investment Growth Chart" style="width:100%; max-width:700px;">
+    {% endif %}
+
+                
 
                 <button type="submit">
                     Calculate Historical Return

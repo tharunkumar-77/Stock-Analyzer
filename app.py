@@ -1,8 +1,58 @@
 from flask import Flask, jsonify, request,render_template
 import yfinance as yf
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  
+import matplotlib.pyplot as plt
+import io
+import base64
 
 app=Flask(__name__)
+
+def generate_price_chart(ticker_obj):
+    """Returns a base64 PNG of the 1-year price history."""
+    history = ticker_obj.history(period="1y")
+    if history.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(8, 3))
+    ax.plot(history.index, history["Close"], color="#0d6efd", linewidth=1.5)
+    ax.set_title("1-Year Price History")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Price")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("utf-8")
+
+
+def generate_growth_chart(history, amount):
+    """Returns a base64 PNG showing how ₹amount would have grown."""
+    if history.empty:
+        return None
+
+    shares = amount / history["Close"].iloc[0]
+    portfolio = history["Close"] * shares
+
+    fig, ax = plt.subplots(figsize=(8, 3))
+    ax.plot(history.index, portfolio, color="#198754", linewidth=1.5)
+    ax.axhline(y=amount, color="#dc3545", linestyle="--", linewidth=1, label="Invested amount")
+    ax.set_title(f"Growth of ₹{amount:,.0f}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Portfolio Value (₹)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("utf-8")
 
 def calculate_return(history):
     if history.empty:
@@ -76,17 +126,63 @@ def home():
     
     return render_template("home.html")
 
-@app.route("/search",methods=["POST"])
+@app.route("/search", methods=["POST"])
 def search():
     stock = request.form["stock"]
     details = get_detail(stock)
-    return render_template("home.html", **details)
-
-
-@app.route("/historical_calculator",methods=["POST"])
-def historical_calulator():
     
-    stock=request.form["stock"]
+    
+    price_chart = None
+    if "symbol" in details:
+        try:
+            ticker = yf.Ticker(details["symbol"])
+            price_chart = generate_price_chart(ticker)
+        except Exception:
+            pass
+
+    return render_template("home.html", **details, price_chart=price_chart)
+
+
+@app.route("/historical_calculator", methods=["POST"])
+def historical_calulator():
+    stock = request.form["stock"]
+    details = get_detail(stock)
+    amount = float(request.form["amount"])
+    start_date = request.form["start_date"]
+    end_date = request.form["end_date"]
+
+    ticker = yf.Ticker(stock)
+    history = ticker.history(start=start_date, end=end_date)
+
+    if history.empty:
+        return render_template("home.html", returns="No past data found for the given date range")
+
+    buy_price = history["Close"].iloc[0]
+    sell_price = history["Close"].iloc[-1]
+    shares = amount / buy_price
+    final_returns = round(shares * sell_price, 2)
+    profit = round(final_returns - amount, 2)
+
+    
+    growth_chart = generate_growth_chart(history, amount)
+
+    
+    price_chart = generate_price_chart(ticker)
+
+    return render_template(
+        "home.html",
+        **details,
+        amount=amount,
+        start_date=start_date,
+        end_date=end_date,
+        buy_price=round(buy_price, 2),
+        sell_price=round(sell_price, 2),
+        returns=profit,
+        price_chart=price_chart,
+        growth_chart=growth_chart,
+    )
+    
+    """stock=request.form["stock"]  previous 
     details = get_detail(stock)
     stock=request.form["stock"]
     amount=float(request.form["amount"])
@@ -116,7 +212,7 @@ def historical_calulator():
     buy_price=round(buy_price, 2),
     sell_price=round(sell_price, 2),
     returns=profit
-)
+)"""
 
 if __name__ == "__main__":
     app.run(debug=True,port=5001)
