@@ -24,6 +24,33 @@ def make_chart(history, color):
     return base64.b64encode(buf.read()).decode("utf-8")
 
 
+def generate_growth_chart_monthly(monthly_history, amount, final_price):
+    if monthly_history.empty:
+        return None
+    total_units = 0
+    portfolio_values = []
+    total_invested_values = []
+    running_invested = 0
+    for _, row in monthly_history.iterrows():
+        total_units += amount / row["Close"]
+        running_invested += amount
+        portfolio_values.append(total_units * row["Close"])
+        total_invested_values.append(running_invested)
+
+    fig, ax = plt.subplots(figsize=(6, 2.5))
+    ax.plot(monthly_history.index, portfolio_values, color="#198754", linewidth=1.5, label="Portfolio value")
+    ax.plot(monthly_history.index, total_invested_values, color="#dc3545", linestyle="--", linewidth=1, label="Total invested")
+    ax.set_title(f"Monthly SIP Growth (₹{amount:,.0f}/month)")
+    ax.set_ylabel("Value (₹)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("utf-8")
+
 def generate_growth_chart(history, amount):
     if history.empty:
         return None
@@ -126,20 +153,37 @@ def historical_calulator():
     amount = float(request.form["amount"])
     start_date = request.form["start_date"]
     end_date = request.form["end_date"]
+    monthly = request.form.get("monthly") == "on"
 
     ticker = yf.Ticker(stock)
     history = ticker.history(start=start_date, end=end_date)
+    history.index = history.index.tz_localize(None)
 
     if history.empty:
         return render_template("home.html", **details, returns="No past data found for the given date range")
 
-    buy_price = history["Close"].iloc[0]
-    sell_price = history["Close"].iloc[-1]
-    shares = amount / buy_price
-    final_returns = round(shares * sell_price, 2)
-    profit = round(final_returns - amount, 2)
-
-    growth_chart = generate_growth_chart(history, amount)
+    if monthly:
+        monthly_history = history.resample("MS").first()
+        total_invested = 0
+        total_units = 0
+        for _, row in monthly_history.iterrows():
+            total_units += amount / row["Close"]
+            total_invested += amount
+        final_value = round(total_units * history["Close"].iloc[-1], 2)
+        profit = round(final_value - total_invested, 2)
+        buy_price = round(history["Close"].iloc[0], 2)
+        sell_price = round(history["Close"].iloc[-1], 2)
+        growth_chart = generate_growth_chart_monthly(monthly_history, amount, history["Close"].iloc[-1])
+    else:
+        buy_price = history["Close"].iloc[0]
+        sell_price = history["Close"].iloc[-1]
+        shares = amount / buy_price
+        final_value = round(shares * sell_price, 2)
+        profit = round(final_value - amount, 2)
+        total_invested = amount
+        buy_price = round(buy_price, 2)
+        sell_price = round(sell_price, 2)
+        growth_chart = generate_growth_chart(history, amount)
 
     return render_template(
         "home.html",
@@ -147,12 +191,13 @@ def historical_calulator():
         amount=amount,
         start_date=start_date,
         end_date=end_date,
-        buy_price=round(buy_price, 2),
-        sell_price=round(sell_price, 2),
+        buy_price=buy_price,
+        sell_price=sell_price,
         returns=profit,
+        total_invested=round(total_invested, 2),
+        monthly=monthly,
         growth_chart=growth_chart,
     )
-
 
 if __name__ == "__main__":
     app.run(debug=True, port=5001)
