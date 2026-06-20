@@ -1,3 +1,5 @@
+from numpy import info
+
 from flask import Flask, jsonify, request, render_template
 import yfinance as yf
 import pandas as pd
@@ -99,6 +101,12 @@ def get_detail(stock):
         symbol = info.get("symbol") or "Not Available"
         price = info.get("currentPrice") or info.get("regularMarketPrice") or "Not Available"
         asset_type = info.get("quoteType") or "Not Available"
+        fund_objective = info.get("longBusinessSummary") or info.get("category") or "Not Available"
+        expense_ratio = info.get("annualReportExpenseRatio") or info.get("netExpenseRatio")
+        if expense_ratio:
+            expense_ratio = round(expense_ratio * 100, 2)  # convert to %
+        else:
+            expense_ratio = "Not Available"
 
         explanation = info.get("longBusinessSummary") or "Not Available"
         if explanation != "Not Available":
@@ -128,6 +136,8 @@ def get_detail(stock):
             "chart_1y": chart_1y,
             "chart_3y": chart_3y,
             "chart_5y": chart_5y,
+            "fund_objective": fund_objective,
+            "expense_ratio": expense_ratio,
         }
 
     except Exception:
