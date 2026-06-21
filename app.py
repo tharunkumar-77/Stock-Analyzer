@@ -104,13 +104,13 @@ def get_detail(stock):
         fund_objective = info.get("longBusinessSummary") or info.get("category") or "Not Available"
         expense_ratio = info.get("annualReportExpenseRatio") or info.get("netExpenseRatio")
         if expense_ratio:
-            expense_ratio = round(expense_ratio * 100, 2)  # convert to %
+            expense_ratio = round(expense_ratio * 100, 2)  
         else:
             expense_ratio = "Not Available"
 
         explanation = info.get("longBusinessSummary") or "Not Available"
         if explanation != "Not Available":
-            explanation = explanation[:330] + "..."
+            explanation = explanation[:513] + "..."
 
         history_1y = ticker.history(period="1y")
         history_3y = ticker.history(period="3y")
@@ -208,6 +208,53 @@ def historical_calulator():
         monthly=monthly,
         growth_chart=growth_chart,
     )
+
+@app.route("/compare", methods=["POST"])
+def compare():
+    stock1 = request.form["stock1"]
+    stock2 = request.form["stock2"]
+
+    details1 = get_detail(stock1)
+    details2 = get_detail(stock2)
+
+    comparison_chart = None
+    winner = None
+    diff = None
+
+    if "error" not in details1 and "error" not in details2:
+        try:
+            t1 = yf.Ticker(details1["symbol"])
+            t2 = yf.Ticker(details2["symbol"])
+            h1 = t1.history(period="1y")
+            h2 = t2.history(period="1y")
+            comparison_chart = generate_comparison_chart(h1, h2, details1["symbol"], details2["symbol"])
+        except Exception:
+            pass
+
+        if details1["return_1y"] > details2["return_1y"]:
+            winner = details1["symbol"]
+        elif details2["return_1y"] > details1["return_1y"]:
+            winner = details2["symbol"]
+        else:
+            winner = "Tie"
+        diff = round(abs(details1["return_1y"] - details2["return_1y"]), 2)
+
+    return render_template(
+        "compare.html",
+        details1=details1,
+        details2=details2,
+        winner=winner,
+        diff=diff,
+        comparison_chart=comparison_chart,
+    )
+
+
+
+    
+
+
+
+
 
 if __name__ == "__main__":
     app.run(debug=True, port=5001)

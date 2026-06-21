@@ -214,6 +214,25 @@
         </div>
     </div>
 
+    <div class="card mb-4">
+    <div class="card-body">
+        <p class="section-title">Compare Two Investments</p>
+        <form action="/compare" method="POST" class="row g-2 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label">Investment 1</label>
+                <input type="text" class="form-control" name="stock1" placeholder="AAPL" required>
+            </div>
+            <div class="col-md-5">
+                <label class="form-label">Investment 2</label>
+                <input type="text" class="form-control" name="stock2" placeholder="MSFT" required>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">Compare</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 </div>
 </body>
 </html>
