@@ -1,6 +1,4 @@
-from numpy import info
-
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, request, render_template
 import yfinance as yf
 import pandas as pd
 import matplotlib
@@ -10,6 +8,40 @@ import io
 import base64
 
 app = Flask(__name__)
+
+
+try:
+    from transformers import pipeline
+    sentiment_pipe = pipeline("sentiment-analysis", model="ProsusAI/finbert")
+except Exception:
+    sentiment_pipe = None
+
+
+def get_sentiment(symbol):
+    try:
+        if sentiment_pipe is None:
+            return None, None
+        ticker = yf.Ticker(symbol)
+        news = ticker.news
+        if not news:
+            return None, None
+        headlines = [item.get("content", {}).get("title", "") or item.get("title", "") for item in news[:8]]
+        headlines = [h for h in headlines if h]
+        if not headlines:
+            return None, None
+        results = sentiment_pipe(headlines)
+        score_map = {"positive": 1, "negative": -1, "neutral": 0}
+        scores = [score_map.get(r["label"], 0) * r["score"] for r in results]
+        avg = sum(scores) / len(scores)
+        if avg > 0.15:
+            label = "Positive"
+        elif avg < -0.15:
+            label = "Negative"
+        else:
+            label = "Neutral"
+        return label, round(avg, 2)
+    except Exception:
+        return None, None
 
 
 def make_chart(history, color):
@@ -38,7 +70,6 @@ def generate_growth_chart_monthly(monthly_history, amount, final_price):
         running_invested += amount
         portfolio_values.append(total_units * row["Close"])
         total_invested_values.append(running_invested)
-
     fig, ax = plt.subplots(figsize=(6, 2.5))
     ax.plot(monthly_history.index, portfolio_values, color="#198754", linewidth=1.5, label="Portfolio value")
     ax.plot(monthly_history.index, total_invested_values, color="#dc3545", linestyle="--", linewidth=1, label="Total invested")
@@ -53,6 +84,7 @@ def generate_growth_chart_monthly(monthly_history, amount, final_price):
     buf.seek(0)
     return base64.b64encode(buf.read()).decode("utf-8")
 
+
 def generate_growth_chart(history, amount):
     if history.empty:
         return None
@@ -63,6 +95,23 @@ def generate_growth_chart(history, amount):
     ax.axhline(y=amount, color="#dc3545", linestyle="--", linewidth=1, label="Invested amount")
     ax.set_title(f"Growth of ₹{amount:,.0f}")
     ax.set_ylabel("Portfolio Value (₹)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("utf-8")
+
+
+def generate_comparison_chart(h1, h2, label1, label2):
+    if h1.empty or h2.empty:
+        return None
+    fig, ax = plt.subplots(figsize=(7, 3))
+    ax.plot(h1.index, h1["Close"] / h1["Close"].iloc[0] * 100, label=label1, color="#0d6efd")
+    ax.plot(h2.index, h2["Close"] / h2["Close"].iloc[0] * 100, label=label2, color="#fd7e14")
+    ax.set_ylabel("Normalized Growth (Base 100)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -104,7 +153,7 @@ def get_detail(stock):
         fund_objective = info.get("longBusinessSummary") or info.get("category") or "Not Available"
         expense_ratio = info.get("annualReportExpenseRatio") or info.get("netExpenseRatio")
         if expense_ratio:
-            expense_ratio = round(expense_ratio * 100, 2)  
+            expense_ratio = round(expense_ratio * 100, 2)
         else:
             expense_ratio = "Not Available"
 
@@ -153,7 +202,8 @@ def home():
 def search():
     stock = request.form["stock"]
     details = get_detail(stock)
-    return render_template("home.html", **details)
+    sentiment_label, sentiment_score = get_sentiment(details.get("symbol", stock))
+    return render_template("home.html", **details, sentiment_label=sentiment_label, sentiment_score=sentiment_score)
 
 
 @app.route("/historical_calculator", methods=["POST"])
@@ -209,6 +259,7 @@ def historical_calulator():
         growth_chart=growth_chart,
     )
 
+
 @app.route("/compare", methods=["POST"])
 def compare():
     stock1 = request.form["stock1"]
@@ -247,13 +298,6 @@ def compare():
         diff=diff,
         comparison_chart=comparison_chart,
     )
-
-
-
-    
-
-
-
 
 
 if __name__ == "__main__":
