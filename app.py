@@ -195,7 +195,9 @@ def get_detail(stock):
 
 @app.route("/")
 def home():
-    return render_template("home.html")
+    df = pd.read_csv("stocks.csv")
+    suggestions = df["name"].tolist()
+    return render_template("home.html", suggestions=suggestions)
 
 
 @app.route("/search", methods=["POST"])

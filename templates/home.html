@@ -26,7 +26,13 @@
                     <label class="form-label">Stock / ETF / Fund / Index</label>
                     <input type="text" class="form-control" name="stock"
                         value="{{ stock if stock else '' }}"
-                        placeholder="e.g. NIFTY50, Apple, AAPL" required>
+                        placeholder="e.g. NIFTY50, Apple, AAPL"
+                        list="stock-suggestions" required>
+                    <datalist id="stock-suggestions">
+                            {% for name in s   uggestions %}
+                    <option value="{{ name }}">
+                        {% endfor %}
+                    </datalist>
                 </div>
                 <div class="col-md-4">
                     <button type="submit" class="btn btn-primary w-100">Search</button>
