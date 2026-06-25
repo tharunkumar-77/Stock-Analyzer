@@ -29,7 +29,7 @@
                         placeholder="e.g. NIFTY50, Apple, AAPL"
                         list="stock-suggestions" required>
                     <datalist id="stock-suggestions">
-                            {% for name in s   uggestions %}
+                            {% for name in suggestions %}
                     <option value="{{ name }}">
                         {% endfor %}
                     </datalist>
@@ -220,6 +220,43 @@
                             <input type="date" class="form-control" name="future_date" required>
                         </div>
                         <button type="submit" class="btn btn-outline-primary w-100">Predict Future Value</button>
+                        {% if projections %}
+<div class="result-box mt-3">
+    <p class="card-title mb-2">
+        Projected value of ₹{{ projection_amount }} 
+        {% if sentiment_label %}
+        — Sentiment: 
+        <span class="{{ 'return-positive' if sentiment_label == 'Positive' else 'return-negative' if sentiment_label == 'Negative' else 'text-secondary' }}">
+            {{ sentiment_label }}
+        </span>
+        {% endif %}
+    </p>
+    <table class="table table-sm mb-0">
+        <thead>
+            <tr>
+                <th>Timeframe</th>
+                <th>Low</th>
+                <th>Expected</th>
+                <th>High</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for label, values in projections.items() %}
+            <tr>
+                <td>{{ label }}</td>
+                <td class="return-negative">₹{{ values.low }}</td>
+                <td class="fw-bold">₹{{ values.projected }}</td>
+                <td class="return-positive">₹{{ values.high }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="text-muted mt-2 mb-0 disclaimer-text">
+        Projections use historical 5-year annualized growth adjusted by current news sentiment. 
+        Short-term estimates carry high uncertainty. Not financial advice.
+    </p>
+</div>
+{% endif %}
                     </form>
                     <p class="text-muted mt-3 mb-0 disclaimer-text">
                         Predictions are estimates based on historical averages and should not be treated as guaranteed returns.

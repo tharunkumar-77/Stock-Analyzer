@@ -9,7 +9,7 @@ import base64
 
 app = Flask(__name__)
 
-
+# ── Sentiment model (optional) ────────────────────────────────────────────────
 try:
     from transformers import pipeline
     sentiment_pipe = pipeline("sentiment-analysis", model="ProsusAI/finbert")
@@ -17,31 +17,78 @@ except Exception:
     sentiment_pipe = None
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def get_suggestions():
+    try:
+        return pd.read_csv("stocks.csv")["name"].tolist()
+    except Exception:
+        return []
+
+
 def get_sentiment(symbol):
+    """Return (label, score) from recent news headlines, or (None, None)."""
     try:
         if sentiment_pipe is None:
             return None, None
         ticker = yf.Ticker(symbol)
-        news = ticker.news
-        if not news:
-            return None, None
-        headlines = [item.get("content", {}).get("title", "") or item.get("title", "") for item in news[:8]]
+        news = ticker.news or []
+        headlines = [
+            (item.get("content", {}).get("title") or item.get("title", ""))
+            for item in news[:8]
+        ]
         headlines = [h for h in headlines if h]
         if not headlines:
             return None, None
+
         results = sentiment_pipe(headlines)
         score_map = {"positive": 1, "negative": -1, "neutral": 0}
-        scores = [score_map.get(r["label"], 0) * r["score"] for r in results]
+        scores = [score_map.get(r["label"].lower(), 0) * r["score"] for r in results]
         avg = sum(scores) / len(scores)
-        if avg > 0.15:
-            label = "Positive"
-        elif avg < -0.15:
-            label = "Negative"
-        else:
-            label = "Neutral"
+
+        label = "Positive" if avg > 0.15 else "Negative" if avg < -0.15 else "Neutral"
         return label, round(avg, 2)
     except Exception:
         return None, None
+
+
+def calculate_return(history):
+    if history.empty or len(history) < 2:
+        return 0.0
+    start_price = history["Close"].iloc[0]
+    end_price = history["Close"].iloc[-1]
+    return ((end_price - start_price) / start_price) * 100
+
+
+def calculate_projection(amount, return_5y, sentiment_score, horizon_days):
+    """Project future value with low / expected / high bands."""
+    if not return_5y or return_5y == "Not available":
+        annual_rate = 0.08
+    else:
+        annual_rate = (1 + return_5y / 100) ** (1 / 5) - 1
+
+    years = horizon_days / 365.25
+
+    # Sentiment nudge fades to zero beyond 1 year
+    sentiment_weight = max(0.0, 1.0 - (horizon_days / 365))
+    sentiment_nudge = (sentiment_score or 0) * sentiment_weight * 0.05
+    adjusted_rate = annual_rate + sentiment_nudge
+
+    projected = round(amount * (1 + adjusted_rate) ** years, 2)
+    uncertainty = max(0.08, 0.15 * (1 - years))
+    low  = round(projected * (1 - uncertainty), 2)
+    high = round(projected * (1 + uncertainty), 2)
+    return projected, low, high
+
+
+# ── Chart generators ──────────────────────────────────────────────────────────
+
+def _encode_figure(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("utf-8")
 
 
 def make_chart(history, color):
@@ -51,38 +98,7 @@ def make_chart(history, color):
     ax.plot(history.index, history["Close"], color=color, linewidth=1.5)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("utf-8")
-
-
-def generate_growth_chart_monthly(monthly_history, amount, final_price):
-    if monthly_history.empty:
-        return None
-    total_units = 0
-    portfolio_values = []
-    total_invested_values = []
-    running_invested = 0
-    for _, row in monthly_history.iterrows():
-        total_units += amount / row["Close"]
-        running_invested += amount
-        portfolio_values.append(total_units * row["Close"])
-        total_invested_values.append(running_invested)
-    fig, ax = plt.subplots(figsize=(6, 2.5))
-    ax.plot(monthly_history.index, portfolio_values, color="#198754", linewidth=1.5, label="Portfolio value")
-    ax.plot(monthly_history.index, total_invested_values, color="#dc3545", linestyle="--", linewidth=1, label="Total invested")
-    ax.set_title(f"Monthly SIP Growth (₹{amount:,.0f}/month)")
-    ax.set_ylabel("Value (₹)")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("utf-8")
+    return _encode_figure(fig)
 
 
 def generate_growth_chart(history, amount):
@@ -91,18 +107,36 @@ def generate_growth_chart(history, amount):
     shares = amount / history["Close"].iloc[0]
     portfolio = history["Close"] * shares
     fig, ax = plt.subplots(figsize=(6, 2.5))
-    ax.plot(history.index, portfolio, color="#198754", linewidth=1.5)
+    ax.plot(history.index, portfolio, color="#198754", linewidth=1.5, label="Portfolio value")
     ax.axhline(y=amount, color="#dc3545", linestyle="--", linewidth=1, label="Invested amount")
     ax.set_title(f"Growth of ₹{amount:,.0f}")
     ax.set_ylabel("Portfolio Value (₹)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("utf-8")
+    return _encode_figure(fig)
+
+
+def generate_growth_chart_monthly(monthly_history, amount, final_price):
+    if monthly_history.empty:
+        return None
+    total_units = 0
+    portfolio_values, total_invested_values, running_invested = [], [], 0
+    for _, row in monthly_history.iterrows():
+        total_units += amount / row["Close"]
+        running_invested += amount
+        portfolio_values.append(total_units * row["Close"])
+        total_invested_values.append(running_invested)
+
+    fig, ax = plt.subplots(figsize=(6, 2.5))
+    ax.plot(monthly_history.index, portfolio_values,      color="#198754", linewidth=1.5, label="Portfolio value")
+    ax.plot(monthly_history.index, total_invested_values, color="#dc3545", linestyle="--", linewidth=1, label="Total invested")
+    ax.set_title(f"Monthly SIP Growth (₹{amount:,.0f}/month)")
+    ax.set_ylabel("Value (₹)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    return _encode_figure(fig)
 
 
 def generate_comparison_chart(h1, h2, label1, label2):
@@ -115,141 +149,143 @@ def generate_comparison_chart(h1, h2, label1, label2):
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("utf-8")
+    return _encode_figure(fig)
 
 
-def calculate_return(history):
-    if history.empty:
-        return "Not available"
-    start_price = history["Close"].iloc[0]
-    end_price = history["Close"].iloc[-1]
-    return ((end_price - start_price) / start_price) * 100
-
+# ── Core data fetcher ─────────────────────────────────────────────────────────
 
 def get_detail(stock):
-    stock_df = pd.read_csv("stocks.csv")
+    """
+    Returns a dict with all stock details, or {"error": "..."} on failure.
+    Always includes 'suggestions' so templates never KeyError.
+    """
+    suggestions = get_suggestions()
     stock = stock.strip()
-    search_item = stock.lower()
-    matched = None
-    for _, row in stock_df.iterrows():
-        if row["name"].lower() == search_item:
-            matched = row
-            break
-    if matched is not None:
-        stock = matched["ticker"]
+
+    # Resolve friendly name → ticker via CSV
+    try:
+        stock_df = pd.read_csv("stocks.csv")
+        for _, row in stock_df.iterrows():
+            if row["name"].lower() == stock.lower():
+                stock = row["ticker"]
+                break
+    except Exception:
+        pass
 
     try:
         ticker = yf.Ticker(stock)
         info = ticker.info
 
-        name = info.get("longName") or info.get("shortName") or "Not Available"
-        symbol = info.get("symbol") or "Not Available"
-        price = info.get("currentPrice") or info.get("regularMarketPrice") or "Not Available"
+        name       = info.get("longName") or info.get("shortName") or "Not Available"
+        symbol     = info.get("symbol") or stock.upper()
+        price      = info.get("currentPrice") or info.get("regularMarketPrice") or "Not Available"
         asset_type = info.get("quoteType") or "Not Available"
-        fund_objective = info.get("longBusinessSummary") or info.get("category") or "Not Available"
-        expense_ratio = info.get("annualReportExpenseRatio") or info.get("netExpenseRatio")
-        if expense_ratio:
-            expense_ratio = round(expense_ratio * 100, 2)
-        else:
-            expense_ratio = "Not Available"
 
-        explanation = info.get("longBusinessSummary") or "Not Available"
-        if explanation != "Not Available":
-            explanation = explanation[:513] + "..."
+        raw_expense = info.get("annualReportExpenseRatio") or info.get("netExpenseRatio")
+        expense_ratio = round(raw_expense * 100, 2) if raw_expense else "Not Available"
+
+        raw_explanation = info.get("longBusinessSummary", "")
+        explanation = (raw_explanation[:510] + "...") if len(raw_explanation) > 510 else raw_explanation or "Not Available"
 
         history_1y = ticker.history(period="1y")
         history_3y = ticker.history(period="3y")
         history_5y = ticker.history(period="5y")
 
-        returns_1y = round(calculate_return(history_1y), 2)
-        returns_3y = round(calculate_return(history_3y), 2)
-        returns_5y = round(calculate_return(history_5y), 2)
-
-        chart_1y = make_chart(history_1y, "#0d6efd")
-        chart_3y = make_chart(history_3y, "#6610f2")
-        chart_5y = make_chart(history_5y, "#fd7e14")
-
         return {
-            "name": name,
-            "symbol": symbol,
-            "price": price,
-            "asset_type": asset_type,
-            "explanation": explanation,
-            "return_1y": returns_1y,
-            "return_3y": returns_3y,
-            "return_5y": returns_5y,
-            "chart_1y": chart_1y,
-            "chart_3y": chart_3y,
-            "chart_5y": chart_5y,
-            "fund_objective": fund_objective,
+            "suggestions":  suggestions,
+            "name":         name,
+            "symbol":       symbol,
+            "price":        price,
+            "asset_type":   asset_type,
+            "explanation":  explanation,
             "expense_ratio": expense_ratio,
+            "return_1y":    round(calculate_return(history_1y), 2),
+            "return_3y":    round(calculate_return(history_3y), 2),
+            "return_5y":    round(calculate_return(history_5y), 2),
+            "chart_1y":     make_chart(history_1y, "#0d6efd"),
+            "chart_3y":     make_chart(history_3y, "#6610f2"),
+            "chart_5y":     make_chart(history_5y, "#fd7e14"),
         }
 
-    except Exception:
-        return {"error": "Invalid Symbol -_-"}
+    except Exception as e:
+        return {"error": f"Could not fetch data for '{stock}': {e}", "suggestions": suggestions}
 
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def home():
-    df = pd.read_csv("stocks.csv")
-    suggestions = df["name"].tolist()
-    return render_template("home.html", suggestions=suggestions)
+    return render_template("home.html", suggestions=get_suggestions())
 
 
 @app.route("/search", methods=["POST"])
 def search():
     stock = request.form["stock"]
     details = get_detail(stock)
-    sentiment_label, sentiment_score = get_sentiment(details.get("symbol", stock))
-    return render_template("home.html", **details, sentiment_label=sentiment_label, sentiment_score=sentiment_score)
+    symbol = details.get("symbol", stock)
+    sentiment_label, sentiment_score = get_sentiment(symbol)
+    return render_template(
+        "home.html",
+        **details,
+        sentiment_label=sentiment_label,
+        sentiment_score=sentiment_score,
+    )
 
 
 @app.route("/historical_calculator", methods=["POST"])
-def historical_calulator():
-    stock = request.form["stock"]
-    details = get_detail(stock)
-    amount = float(request.form["amount"])
+def historical_calculator():
+    stock      = request.form["stock"]
+    amount     = float(request.form["amount"])
     start_date = request.form["start_date"]
-    end_date = request.form["end_date"]
-    monthly = request.form.get("monthly") == "on"
+    end_date   = request.form["end_date"]
+    monthly    = request.form.get("monthly") == "on"
 
-    ticker = yf.Ticker(stock)
+    details = get_detail(stock)
+    if "error" in details:
+        return render_template("home.html", **details)
+
+    symbol = details["symbol"]
+    sentiment_label, sentiment_score = get_sentiment(symbol)
+
+    ticker  = yf.Ticker(symbol)
     history = ticker.history(start=start_date, end=end_date)
     history.index = history.index.tz_localize(None)
 
     if history.empty:
-        return render_template("home.html", **details, returns="No past data found for the given date range")
+        return render_template(
+            "home.html", **details,
+            sentiment_label=sentiment_label,
+            sentiment_score=sentiment_score,
+            error="No data found for the selected date range.",
+        )
 
     if monthly:
         monthly_history = history.resample("MS").first()
-        total_invested = 0
-        total_units = 0
+        total_units, total_invested = 0, 0
         for _, row in monthly_history.iterrows():
-            total_units += amount / row["Close"]
+            total_units   += amount / row["Close"]
             total_invested += amount
-        final_value = round(total_units * history["Close"].iloc[-1], 2)
-        profit = round(final_value - total_invested, 2)
-        buy_price = round(history["Close"].iloc[0], 2)
-        sell_price = round(history["Close"].iloc[-1], 2)
+        final_value  = round(total_units * history["Close"].iloc[-1], 2)
+        profit       = round(final_value - total_invested, 2)
+        buy_price    = round(history["Close"].iloc[0], 2)
+        sell_price   = round(history["Close"].iloc[-1], 2)
         growth_chart = generate_growth_chart_monthly(monthly_history, amount, history["Close"].iloc[-1])
     else:
-        buy_price = history["Close"].iloc[0]
-        sell_price = history["Close"].iloc[-1]
-        shares = amount / buy_price
-        final_value = round(shares * sell_price, 2)
-        profit = round(final_value - amount, 2)
+        buy_price    = history["Close"].iloc[0]
+        sell_price   = history["Close"].iloc[-1]
+        shares       = amount / buy_price
+        final_value  = round(shares * sell_price, 2)
+        profit       = round(final_value - amount, 2)
         total_invested = amount
-        buy_price = round(buy_price, 2)
-        sell_price = round(sell_price, 2)
+        buy_price    = round(buy_price, 2)
+        sell_price   = round(sell_price, 2)
         growth_chart = generate_growth_chart(history, amount)
 
     return render_template(
         "home.html",
         **details,
+        sentiment_label=sentiment_label,
+        sentiment_score=sentiment_score,
         amount=amount,
         start_date=start_date,
         end_date=end_date,
@@ -262,6 +298,47 @@ def historical_calulator():
     )
 
 
+@app.route("/future_prediction", methods=["POST"])
+def future_prediction():
+    stock  = request.form.get("stock", "").strip()
+    amount = float(request.form["amount"])
+
+    if not stock:
+        return render_template("home.html", suggestions=get_suggestions(), error="No stock provided.")
+
+    details = get_detail(stock)
+    if "error" in details:
+        return render_template("home.html", **details)
+
+    sentiment_label, sentiment_score = get_sentiment(details["symbol"])
+
+    timeframes = {
+        "1 Week":   7,
+        "2 Weeks":  14,
+        "1 Month":  30,
+        "3 Months": 90,
+        "6 Months": 180,
+        "1 Year":   365,
+    }
+
+    projections = {
+        label: dict(zip(
+            ("projected", "low", "high"),
+            calculate_projection(amount, details["return_5y"], sentiment_score, days)
+        ))
+        for label, days in timeframes.items()
+    }
+
+    return render_template(
+        "home.html",
+        **details,
+        sentiment_label=sentiment_label,
+        sentiment_score=sentiment_score,
+        projections=projections,
+        projection_amount=amount,
+    )
+
+
 @app.route("/compare", methods=["POST"])
 def compare():
     stock1 = request.form["stock1"]
@@ -270,27 +347,19 @@ def compare():
     details1 = get_detail(stock1)
     details2 = get_detail(stock2)
 
-    comparison_chart = None
-    winner = None
-    diff = None
+    comparison_chart = winner = diff = None
 
     if "error" not in details1 and "error" not in details2:
         try:
-            t1 = yf.Ticker(details1["symbol"])
-            t2 = yf.Ticker(details2["symbol"])
-            h1 = t1.history(period="1y")
-            h2 = t2.history(period="1y")
+            h1 = yf.Ticker(details1["symbol"]).history(period="1y")
+            h2 = yf.Ticker(details2["symbol"]).history(period="1y")
             comparison_chart = generate_comparison_chart(h1, h2, details1["symbol"], details2["symbol"])
         except Exception:
             pass
 
-        if details1["return_1y"] > details2["return_1y"]:
-            winner = details1["symbol"]
-        elif details2["return_1y"] > details1["return_1y"]:
-            winner = details2["symbol"]
-        else:
-            winner = "Tie"
-        diff = round(abs(details1["return_1y"] - details2["return_1y"]), 2)
+        r1, r2 = details1["return_1y"], details2["return_1y"]
+        winner = details1["symbol"] if r1 > r2 else details2["symbol"] if r2 > r1 else "Tie"
+        diff   = round(abs(r1 - r2), 2)
 
     return render_template(
         "compare.html",
