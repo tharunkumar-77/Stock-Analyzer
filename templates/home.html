@@ -22,16 +22,25 @@
         <div class="card-body">
             <p class="section-title">Search Investment</p>
             <div class="row g-2 align-items-end">
-                <div class="col-md-8">
+                <div class="col-md-8" style="position:relative">
                     <label class="form-label">Stock / ETF / Fund / Index</label>
                     <input type="text" class="form-control" id="search-input"
-                        placeholder="e.g. NIFTY50, Apple, AAPL"
-                        list="stock-suggestions" autocomplete="off">
-                    <datalist id="stock-suggestions">
-                        {% for name in suggestions %}
-                        <option value="{{ name }}">
-                        {% endfor %}
-                    </datalist>
+                        placeholder="e.g. Nifty 50, Apple, AAPL"
+                        autocomplete="off">
+                    <div id="suggestions-box" style="
+                        display:none;
+                        position:absolute;
+                        top:100%;
+                        left:0;
+                        right:0;
+                        background:white;
+                        border:1px solid #dee2e6;
+                        border-radius:8px;
+                        box-shadow:0 4px 12px rgba(0,0,0,0.1);
+                        z-index:1000;
+                        max-height:200px;
+                        overflow-y:auto;
+                    "></div>
                 </div>
                 <div class="col-md-4">
                     <button class="btn btn-primary w-100" id="search-btn" onclick="doSearch()">Search</button>
@@ -175,8 +184,44 @@ async function post(url, body) {
     return res.json();
 }
 
+// ── Autocomplete ──────────────────────────────────────────────────────────────
+const allSuggestions = {{ suggestions | tojson}};
+const searchInput = document.getElementById("search-input");
+const suggestBox  = document.getElementById("suggestions-box");
+
+searchInput.addEventListener("input", function () {
+    const val = this.value.trim().toLowerCase();
+    suggestBox.innerHTML = "";
+    if (!val) { suggestBox.style.display = "none"; return; }
+
+    const matches = allSuggestions.filter(s => s.toLowerCase().includes(val)).slice(0, 8);
+    if (matches.length === 0) { suggestBox.style.display = "none"; return; }
+
+    matches.forEach(name => {
+        const div = document.createElement("div");
+        div.textContent = name;
+        div.style.cssText = "padding:10px 14px;cursor:pointer;font-size:0.9rem;border-bottom:1px solid #f1f3f5;";
+        div.addEventListener("mouseenter", () => div.style.background = "#f8f9fa");
+        div.addEventListener("mouseleave", () => div.style.background = "white");
+        div.addEventListener("click", () => {
+            searchInput.value = name;
+            suggestBox.style.display = "none";
+            doSearch();
+        });
+        suggestBox.appendChild(div);
+    });
+    suggestBox.style.display = "block";
+});
+
+document.addEventListener("click", function (e) {
+    if (!searchInput.contains(e.target) && !suggestBox.contains(e.target)) {
+        suggestBox.style.display = "none";
+    }
+});
+
+// ── Search ────────────────────────────────────────────────────────────────────
 async function doSearch() {
-    const stock = document.getElementById("search-input").value.trim();
+    const stock = searchInput.value.trim();
     if (!stock) return;
     loader("search-loader", true);
     document.getElementById("search-btn").disabled = true;
@@ -258,6 +303,7 @@ async function doSearch() {
     document.getElementById("performance-content").innerHTML = perfHtml;
 }
 
+// ── Historical Calculator ─────────────────────────────────────────────────────
 async function doHistorical() {
     if (!currentSymbol) { alert("Search a stock first."); return; }
     const amount    = parseFloat(document.getElementById("hist-amount").value);
@@ -304,6 +350,7 @@ async function doHistorical() {
     document.getElementById("hist-result").innerHTML = html;
 }
 
+// ── Future Projection ─────────────────────────────────────────────────────────
 async function doFuture() {
     if (!currentSymbol) { alert("Search a stock first."); return; }
     const amount  = parseFloat(document.getElementById("future-amount").value);
@@ -344,6 +391,7 @@ async function doFuture() {
         </div>`;
 }
 
+// ── Compare ───────────────────────────────────────────────────────────────────
 async function doCompare() {
     const s1 = document.getElementById("compare-s1").value.trim();
     const s2 = document.getElementById("compare-s2").value.trim();
@@ -391,7 +439,8 @@ async function doCompare() {
         </div>`;
 }
 
-document.getElementById("search-input").addEventListener("keydown", function(e) {
+// ── Enter key ─────────────────────────────────────────────────────────────────
+searchInput.addEventListener("keydown", function(e) {
     if (e.key === "Enter") doSearch();
 });
 </script>
