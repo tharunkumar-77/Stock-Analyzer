@@ -164,28 +164,45 @@
 
 </div>
 
+<!-- Suggestions data passed safely from Flask -->
+<div id="suggestions-data" data-suggestions="{{ suggestions | tojson | e }}" style="display:none"></div>
+
 <script>
 let currentSymbol = "";
+
+// XSS sanitizer — always use this when injecting API data into innerHTML
+function esc(str) {
+    const d = document.createElement("div");
+    d.textContent = String(str ?? "");
+    return d.innerHTML;
+}
 
 function loader(id, show) {
     document.getElementById(id).style.display = show ? "block" : "none";
 }
 
 function returnClass(val) {
-    return val > 0 ? "return-positive" : "return-negative";
+    return val >= 0 ? "return-positive" : "return-negative";
 }
 
 async function post(url, body) {
-    const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-    });
-    return res.json();
+    try {
+        const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        return res.json();
+    } catch (err) {
+        return { error: err.message };
+    }
 }
 
 // ── Autocomplete ──────────────────────────────────────────────────────────────
-const allSuggestions = {{ suggestions | tojson}};
+const allSuggestions = JSON.parse(
+    document.getElementById("suggestions-data").dataset.suggestions || "[]"
+);
 const searchInput = document.getElementById("search-input");
 const suggestBox  = document.getElementById("suggestions-box");
 
@@ -226,81 +243,88 @@ async function doSearch() {
     loader("search-loader", true);
     document.getElementById("search-btn").disabled = true;
 
-    const data = await post("/api/search", { stock });
+    try {
+        const data = await post("/api/search", { stock });
 
-    loader("search-loader", false);
-    document.getElementById("search-btn").disabled = false;
+        if (data.error) {
+            document.getElementById("info-content").innerHTML =
+                `<div class="alert alert-danger mb-0">${esc(data.error)}</div>`;
+            return;
+        }
 
-    if (data.error) {
-        document.getElementById("info-content").innerHTML =
-            `<div class="alert alert-danger mb-0">${data.error}</div>`;
-        return;
+        currentSymbol = data.symbol;
+
+        const price = typeof data.price === "number"
+            ? `₹${data.price.toLocaleString("en-IN")}`
+            : esc(data.price);
+
+        let expHtml = "";
+        if (["ETF","MUTUALFUND"].includes(data.asset_type) && data.expense_ratio !== "Not Available") {
+            expHtml = `<div class="col-6 col-md-3">
+                <p class="card-title mb-1">Expense Ratio</p>
+                <p class="stat-value fs-6">${esc(data.expense_ratio)}%</p>
+            </div>`;
+        }
+        document.getElementById("info-content").innerHTML = `
+            <div class="row g-3">
+                <div class="col-6 col-md-3">
+                    <p class="card-title mb-1">Name</p>
+                    <p class="stat-value fs-6">${esc(data.name)}</p>
+                </div>
+                <div class="col-6 col-md-3">
+                    <p class="card-title mb-1">Ticker</p>
+                    <p class="stat-value">${esc(data.symbol)}</p>
+                </div>
+                <div class="col-6 col-md-3">
+                    <p class="card-title mb-1">Current Price</p>
+                    <p class="stat-value">${price}</p>
+                </div>
+                <div class="col-6 col-md-3">
+                    <p class="card-title mb-1">Asset Type</p>
+                    <p class="stat-value fs-6">${esc(data.asset_type)}</p>
+                </div>
+                ${expHtml}
+            </div>`;
+
+        if (data.sentiment_label) {
+            const icon = data.sentiment_label === "Positive" ? "▲" : data.sentiment_label === "Negative" ? "▼" : "—";
+            const cls  = data.sentiment_label === "Positive" ? "return-positive" : data.sentiment_label === "Negative" ? "return-negative" : "text-secondary";
+            document.getElementById("sentiment-content").innerHTML = `
+                <div class="d-flex align-items-center gap-3">
+                    <span class="fs-4 ${cls}">${icon} ${esc(data.sentiment_label)}</span>
+                    <span class="text-muted small">Score: ${esc(data.sentiment_score)} &nbsp;|&nbsp; Based on recent news headlines</span>
+                </div>
+                <p class="text-muted mb-0 mt-2 disclaimer-text">
+                    Sentiment is derived from recent news headlines using a financial NLP model. It reflects current news tone, not a prediction of price movement.
+                </p>`;
+            document.getElementById("sentiment-card").style.display = "block";
+        } else {
+            document.getElementById("sentiment-card").style.display = "none";
+        }
+
+        document.getElementById("about-content").innerHTML =
+            `<p class="text-muted mb-0 explanation-text">${esc(data.explanation || "No description available.")}</p>`;
+
+        const periods = [
+            { label: "1 Year Return", val: data.return_1y, chart: data.chart_1y },
+            { label: "3 Year Return", val: data.return_3y, chart: data.chart_3y },
+            { label: "5 Year Return", val: data.return_5y, chart: data.chart_5y },
+        ];
+        let perfHtml = `<div class="row g-4">`;
+        for (const p of periods) {
+            perfHtml += `<div class="col-md-4">
+                <p class="card-title mb-1">${esc(p.label)}</p>
+                <p class="${returnClass(p.val)} fs-5">${esc(p.val)}%</p>
+                ${p.chart ? `<img class="chart" src="data:image/png;base64,${p.chart}" alt="${esc(p.label)}">` : ""}
+            </div>`;
+        }
+        perfHtml += `</div>`;
+        document.getElementById("performance-content").innerHTML = perfHtml;
+
+    } finally {
+        loader("search-loader", false);
+        document.getElementById("search-btn").disabled = false;
     }
-
-    currentSymbol = data.symbol;
-
-    let expHtml = "";
-    if (["ETF","MUTUALFUND"].includes(data.asset_type) && data.expense_ratio !== "Not Available") {
-        expHtml = `<div class="col-6 col-md-3">
-            <p class="card-title mb-1">Expense Ratio</p>
-            <p class="stat-value fs-6">${data.expense_ratio}%</p>
-        </div>`;
-    }
-    document.getElementById("info-content").innerHTML = `
-        <div class="row g-3">
-            <div class="col-6 col-md-3">
-                <p class="card-title mb-1">Name</p>
-                <p class="stat-value fs-6">${data.name}</p>
-            </div>
-            <div class="col-6 col-md-3">
-                <p class="card-title mb-1">Ticker</p>
-                <p class="stat-value">${data.symbol}</p>
-            </div>
-            <div class="col-6 col-md-3">
-                <p class="card-title mb-1">Current Price</p>
-                <p class="stat-value">${data.price}</p>
-            </div>
-            <div class="col-6 col-md-3">
-                <p class="card-title mb-1">Asset Type</p>
-                <p class="stat-value fs-6">${data.asset_type}</p>
-            </div>
-            ${expHtml}
-        </div>`;
-
-    if (data.sentiment_label) {
-        const icon = data.sentiment_label === "Positive" ? "▲" : data.sentiment_label === "Negative" ? "▼" : "—";
-        const cls  = data.sentiment_label === "Positive" ? "return-positive" : data.sentiment_label === "Negative" ? "return-negative" : "text-secondary";
-        document.getElementById("sentiment-content").innerHTML = `
-            <div class="d-flex align-items-center gap-3">
-                <span class="fs-4 ${cls}">${icon} ${data.sentiment_label}</span>
-                <span class="text-muted small">Score: ${data.sentiment_score} &nbsp;|&nbsp; Based on recent news headlines</span>
-            </div>
-            <p class="text-muted mb-0 mt-2 disclaimer-text">
-                Sentiment is derived from recent news headlines using a financial NLP model. It reflects current news tone, not a prediction of price movement.
-            </p>`;
-        document.getElementById("sentiment-card").style.display = "block";
-    } else {
-        document.getElementById("sentiment-card").style.display = "none";
-    }
-
-    document.getElementById("about-content").innerHTML =
-        `<p class="text-muted mb-0 explanation-text">${data.explanation || "No description available."}</p>`;
-
-    const periods = [
-        { label: "1 Year Return", val: data.return_1y, chart: data.chart_1y },
-        { label: "3 Year Return", val: data.return_3y, chart: data.chart_3y },
-        { label: "5 Year Return", val: data.return_5y, chart: data.chart_5y },
-    ];
-    let perfHtml = `<div class="row g-4">`;
-    for (const p of periods) {
-        perfHtml += `<div class="col-md-4">
-            <p class="card-title mb-1">${p.label}</p>
-            <p class="${returnClass(p.val)} fs-5">${p.val}%</p>
-            ${p.chart ? `<img class="chart" src="data:image/png;base64,${p.chart}" alt="${p.label}">` : ""}
-        </div>`;
-    }
-    perfHtml += `</div>`;
-    document.getElementById("performance-content").innerHTML = perfHtml;
 }
 
 // ── Historical Calculator ─────────────────────────────────────────────────────
@@ -313,41 +337,45 @@ async function doHistorical() {
     if (!amount || !startDate || !endDate) { alert("Please fill amount, start date, and end date."); return; }
 
     loader("hist-loader", true);
-    const data = await post("/api/historical", {
-        stock: currentSymbol, amount, start_date: startDate, end_date: endDate, monthly
-    });
-    loader("hist-loader", false);
+    try {
+        const data = await post("/api/historical", {
+            stock: currentSymbol, amount, start_date: startDate, end_date: endDate, monthly
+        });
 
-    if (data.error) {
-        document.getElementById("hist-result").innerHTML =
-            `<div class="alert alert-danger">${data.error}</div>`;
-        return;
-    }
+        if (data.error) {
+            document.getElementById("hist-result").innerHTML =
+                `<div class="alert alert-danger">${esc(data.error)}</div>`;
+            return;
+        }
 
-    const plClass = data.returns >= 0 ? "return-positive" : "return-negative";
-    let html = `<div class="result-box">
-        <div class="row text-center">
-            <div class="col-6">
-                <p class="card-title mb-1">Buy Price</p>
-                <p class="fw-bold mb-0">₹${data.buy_price}</p>
-            </div>
-            <div class="col-6">
-                <p class="card-title mb-1">Sell Price</p>
-                <p class="fw-bold mb-0">₹${data.sell_price}</p>
-            </div>
-        </div>`;
-    if (monthly) {
+        const plClass = data.returns >= 0 ? "return-positive" : "return-negative";
+        let html = `<div class="result-box">
+            <div class="row text-center">
+                <div class="col-6">
+                    <p class="card-title mb-1">Buy Price</p>
+                    <p class="fw-bold mb-0">₹${esc(data.buy_price)}</p>
+                </div>
+                <div class="col-6">
+                    <p class="card-title mb-1">Sell Price</p>
+                    <p class="fw-bold mb-0">₹${esc(data.sell_price)}</p>
+                </div>
+            </div>`;
+        if (monthly) {
+            html += `<hr class="my-2">
+            <p class="text-center mb-0 fw-semibold">Total Invested: <span class="text-secondary">₹${esc(data.total_invested)}</span></p>`;
+        }
         html += `<hr class="my-2">
-        <p class="text-center mb-0 fw-semibold">Total Invested: <span class="text-secondary">₹${data.total_invested}</span></p>`;
+            <p class="text-center mb-0 fw-semibold">Profit / Loss:
+                <span class="${plClass}">₹${esc(data.returns)}</span>
+            </p></div>`;
+        if (data.growth_chart) {
+            html += `<img class="chart mt-3" src="data:image/png;base64,${data.growth_chart}" alt="Growth Chart">`;
+        }
+        document.getElementById("hist-result").innerHTML = html;
+
+    } finally {
+        loader("hist-loader", false);
     }
-    html += `<hr class="my-2">
-        <p class="text-center mb-0 fw-semibold">Profit / Loss:
-            <span class="${plClass}">₹${data.returns}</span>
-        </p></div>`;
-    if (data.growth_chart) {
-        html += `<img class="chart mt-3" src="data:image/png;base64,${data.growth_chart}" alt="Growth Chart">`;
-    }
-    document.getElementById("hist-result").innerHTML = html;
 }
 
 // ── Future Projection ─────────────────────────────────────────────────────────
@@ -358,37 +386,41 @@ async function doFuture() {
     if (!amount) { alert("Please enter an investment amount."); return; }
 
     loader("future-loader", true);
-    const data = await post("/api/future", { stock: currentSymbol, amount, horizon });
-    loader("future-loader", false);
+    try {
+        const data = await post("/api/future", { stock: currentSymbol, amount, horizon });
 
-    if (data.error) {
-        document.getElementById("future-result").innerHTML =
-            `<div class="alert alert-danger">${data.error}</div>`;
-        return;
+        if (data.error) {
+            document.getElementById("future-result").innerHTML =
+                `<div class="alert alert-danger">${esc(data.error)}</div>`;
+            return;
+        }
+
+        const sentHtml = data.sentiment_label
+            ? `— Sentiment: <span class="${data.sentiment_label === 'Positive' ? 'return-positive' : data.sentiment_label === 'Negative' ? 'return-negative' : 'text-secondary'}">${esc(data.sentiment_label)}</span>`
+            : "";
+
+        document.getElementById("future-result").innerHTML = `
+            <div class="result-box">
+                <p class="card-title mb-2">₹${esc(amount)} over ${esc(data.horizon_label)} ${sentHtml}</p>
+                <div class="row text-center">
+                    <div class="col-4">
+                        <p class="card-title mb-1">Low</p>
+                        <p class="return-negative fw-bold mb-0">₹${esc(data.low)}</p>
+                    </div>
+                    <div class="col-4">
+                        <p class="card-title mb-1">Expected</p>
+                        <p class="fw-bold fs-5 mb-0">₹${esc(data.projected)}</p>
+                    </div>
+                    <div class="col-4">
+                        <p class="card-title mb-1">High</p>
+                        <p class="return-positive fw-bold mb-0">₹${esc(data.high)}</p>
+                    </div>
+                </div>
+            </div>`;
+
+    } finally {
+        loader("future-loader", false);
     }
-
-    const sentHtml = data.sentiment_label
-        ? `— Sentiment: <span class="${data.sentiment_label === 'Positive' ? 'return-positive' : data.sentiment_label === 'Negative' ? 'return-negative' : 'text-secondary'}">${data.sentiment_label}</span>`
-        : "";
-
-    document.getElementById("future-result").innerHTML = `
-        <div class="result-box">
-            <p class="card-title mb-2">₹${amount} over ${data.horizon_label} ${sentHtml}</p>
-            <div class="row text-center">
-                <div class="col-4">
-                    <p class="card-title mb-1">Low</p>
-                    <p class="return-negative fw-bold mb-0">₹${data.low}</p>
-                </div>
-                <div class="col-4">
-                    <p class="card-title mb-1">Expected</p>
-                    <p class="fw-bold fs-5 mb-0">₹${data.projected}</p>
-                </div>
-                <div class="col-4">
-                    <p class="card-title mb-1">High</p>
-                    <p class="return-positive fw-bold mb-0">₹${data.high}</p>
-                </div>
-            </div>
-        </div>`;
 }
 
 // ── Compare ───────────────────────────────────────────────────────────────────
@@ -398,45 +430,50 @@ async function doCompare() {
     if (!s1 || !s2) { alert("Enter both tickers."); return; }
 
     loader("compare-loader", true);
-    const data = await post("/api/compare", { stock1: s1, stock2: s2 });
-    loader("compare-loader", false);
+    try {
+        const data = await post("/api/compare", { stock1: s1, stock2: s2 });
 
-    if (data.error) {
-        document.getElementById("compare-result").innerHTML =
-            `<div class="alert alert-danger">${data.error}</div>`;
-        return;
+        if (data.error) {
+            document.getElementById("compare-result").innerHTML =
+                `<div class="alert alert-danger">${esc(data.error)}</div>`;
+            return;
+        }
+
+        const winnerHtml = data.winner === "Tie"
+            ? `It's a tie — equal 1-year returns`
+            : `<span class="return-positive">${esc(data.winner)}</span> performed better by ${esc(data.diff)}%`;
+
+        const chartHtml = data.comparison_chart
+            ? `<img class="chart mb-4" src="data:image/png;base64,${data.comparison_chart}" alt="Comparison Chart">`
+            : "";
+
+        function stockCard(d) {
+            const p = typeof d.price === "number" ? `₹${d.price.toLocaleString("en-IN")}` : esc(d.price);
+            return `<div class="card"><div class="card-body">
+                <p class="section-title">${esc(d.name)}</p>
+                <p><strong>Ticker:</strong> ${esc(d.symbol)}</p>
+                <p><strong>Price:</strong> ${p}</p>
+                <p><strong>Asset Type:</strong> ${esc(d.asset_type)}</p>
+                <p class="${returnClass(d.return_1y)}">1Y: ${esc(d.return_1y)}%</p>
+                <p class="${returnClass(d.return_3y)}">3Y: ${esc(d.return_3y)}%</p>
+                <p class="${returnClass(d.return_5y)}">5Y: ${esc(d.return_5y)}%</p>
+            </div></div>`;
+        }
+
+        document.getElementById("compare-result").innerHTML = `
+            <div class="card mb-3"><div class="card-body text-center">
+                <p class="section-title">Result</p>
+                <h5>${winnerHtml}</h5>
+            </div></div>
+            ${chartHtml}
+            <div class="row g-4">
+                <div class="col-md-6">${stockCard(data.details1)}</div>
+                <div class="col-md-6">${stockCard(data.details2)}</div>
+            </div>`;
+
+    } finally {
+        loader("compare-loader", false);
     }
-
-    const winnerHtml = data.winner === "Tie"
-        ? `It's a tie — equal 1-year returns`
-        : `<span class="return-positive">${data.winner}</span> performed better by ${data.diff}%`;
-
-    const chartHtml = data.comparison_chart
-        ? `<img class="chart mb-4" src="data:image/png;base64,${data.comparison_chart}" alt="Comparison Chart">`
-        : "";
-
-    function stockCard(d) {
-        return `<div class="card"><div class="card-body">
-            <p class="section-title">${d.name}</p>
-            <p><strong>Ticker:</strong> ${d.symbol}</p>
-            <p><strong>Price:</strong> ${d.price}</p>
-            <p><strong>Asset Type:</strong> ${d.asset_type}</p>
-            <p class="${returnClass(d.return_1y)}">1Y: ${d.return_1y}%</p>
-            <p class="${returnClass(d.return_3y)}">3Y: ${d.return_3y}%</p>
-            <p class="${returnClass(d.return_5y)}">5Y: ${d.return_5y}%</p>
-        </div></div>`;
-    }
-
-    document.getElementById("compare-result").innerHTML = `
-        <div class="card mb-3"><div class="card-body text-center">
-            <p class="section-title">Result</p>
-            <h5>${winnerHtml}</h5>
-        </div></div>
-        ${chartHtml}
-        <div class="row g-4">
-            <div class="col-md-6">${stockCard(data.details1)}</div>
-            <div class="col-md-6">${stockCard(data.details2)}</div>
-        </div>`;
 }
 
 // ── Enter key ─────────────────────────────────────────────────────────────────

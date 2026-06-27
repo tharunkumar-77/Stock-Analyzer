@@ -6,6 +6,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import io
 import base64
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
@@ -16,12 +17,15 @@ try:
 except Exception:
     sentiment_pipe = None
 
+# Cache CSV at startup instead of reading on every request
+try:
+    _stocks_df = pd.read_csv("stocks.csv")
+except Exception:
+    _stocks_df = pd.DataFrame(columns=["name", "ticker"])
+
 
 def get_suggestions():
-    try:
-        return pd.read_csv("stocks.csv")["name"].tolist()
-    except Exception:
-        return []
+    return _stocks_df["name"].tolist()
 
 
 def get_sentiment(symbol):
@@ -50,7 +54,10 @@ def get_sentiment(symbol):
 def calculate_return(history):
     if history.empty or len(history) < 2:
         return 0.0
-    return ((history["Close"].iloc[-1] - history["Close"].iloc[0]) / history["Close"].iloc[0]) * 100
+    first = history["Close"].iloc[0]
+    if first == 0:
+        return 0.0
+    return ((history["Close"].iloc[-1] - first) / first) * 100
 
 
 def calculate_projection(amount, return_5y, sentiment_score, horizon_days):
@@ -61,9 +68,9 @@ def calculate_projection(amount, return_5y, sentiment_score, horizon_days):
     years = horizon_days / 365.25
     sentiment_weight = max(0.0, 1.0 - (horizon_days / 365))
     sentiment_nudge = (sentiment_score or 0) * sentiment_weight * 0.05
-    adjusted_rate = annual_rate + sentiment_nudge
+    adjusted_rate = max(annual_rate + sentiment_nudge, -0.99)  # floor to avoid nonsensical results
     projected = round(amount * (1 + adjusted_rate) ** years, 2)
-    uncertainty = max(0.08, 0.15 * (1 - years))
+    uncertainty = min(0.5, 0.08 + 0.1 * years)  # more uncertainty for longer horizons
     return projected, round(projected * (1 - uncertainty), 2), round(projected * (1 + uncertainty), 2)
 
 
@@ -73,6 +80,13 @@ def _encode_figure(fig):
     plt.close(fig)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode("utf-8")
+
+
+def _normalize_index(history):
+    """Strip timezone from a history DataFrame index safely."""
+    if history.index.tz is not None:
+        history.index = history.index.tz_convert(None)
+    return history
 
 
 def make_chart(history, color):
@@ -88,7 +102,10 @@ def make_chart(history, color):
 def generate_growth_chart(history, amount):
     if history.empty:
         return None
-    shares = amount / history["Close"].iloc[0]
+    first_price = history["Close"].iloc[0]
+    if first_price == 0:
+        return None
+    shares = amount / first_price
     portfolio = history["Close"] * shares
     fig, ax = plt.subplots(figsize=(6, 2.5))
     ax.plot(history.index, portfolio, color="#198754", linewidth=1.5, label="Portfolio value")
@@ -101,19 +118,23 @@ def generate_growth_chart(history, amount):
     return _encode_figure(fig)
 
 
-def generate_growth_chart_monthly(monthly_history, amount, final_price):
+def generate_growth_chart_monthly(monthly_history, amount):
     if monthly_history.empty:
         return None
     total_units, running_invested = 0, 0
     portfolio_values, total_invested_values = [], []
     for _, row in monthly_history.iterrows():
+        if row["Close"] == 0:
+            continue
         total_units += amount / row["Close"]
         running_invested += amount
         portfolio_values.append(total_units * row["Close"])
         total_invested_values.append(running_invested)
+    if not portfolio_values:
+        return None
     fig, ax = plt.subplots(figsize=(6, 2.5))
-    ax.plot(monthly_history.index, portfolio_values, color="#198754", linewidth=1.5, label="Portfolio value")
-    ax.plot(monthly_history.index, total_invested_values, color="#dc3545", linestyle="--", linewidth=1, label="Total invested")
+    ax.plot(monthly_history.index[:len(portfolio_values)], portfolio_values, color="#198754", linewidth=1.5, label="Portfolio value")
+    ax.plot(monthly_history.index[:len(total_invested_values)], total_invested_values, color="#dc3545", linestyle="--", linewidth=1, label="Total invested")
     ax.set_title(f"Monthly SIP Growth (₹{amount:,.0f}/month)")
     ax.set_ylabel("Value (₹)")
     ax.legend()
@@ -124,6 +145,8 @@ def generate_growth_chart_monthly(monthly_history, amount, final_price):
 
 def generate_comparison_chart(h1, h2, label1, label2):
     if h1.empty or h2.empty:
+        return None
+    if h1["Close"].iloc[0] == 0 or h2["Close"].iloc[0] == 0:
         return None
     fig, ax = plt.subplots(figsize=(7, 3))
     ax.plot(h1.index, h1["Close"] / h1["Close"].iloc[0] * 100, label=label1, color="#0d6efd")
@@ -136,39 +159,34 @@ def generate_comparison_chart(h1, h2, label1, label2):
 
 
 def get_detail(stock):
-    suggestions = get_suggestions()
     stock = stock.strip()
-    try:
-        stock_df = pd.read_csv("stocks.csv")
-        for _, row in stock_df.iterrows():
-            if row["name"].lower() == stock.lower():
-                stock = row["ticker"]
-                break
-    except Exception:
-        pass
+    # Resolve name to ticker using cached CSV
+    match = _stocks_df[_stocks_df["name"].str.lower() == stock.lower()]
+    if not match.empty:
+        stock = match.iloc[0]["ticker"]
+
     try:
         ticker = yf.Ticker(stock)
-        with ThreadPoolExecutor() as ex:
+        with ThreadPoolExecutor(max_workers=4) as ex:
             f_info = ex.submit(lambda: ticker.info)
             f_1y   = ex.submit(ticker.history, period="1y")
             f_3y   = ex.submit(ticker.history, period="3y")
             f_5y   = ex.submit(ticker.history, period="5y")
             info       = f_info.result()
-            history_1y = f_1y.result()
-            history_3y = f_3y.result()
-            history_5y = f_5y.result()
+            history_1y = _normalize_index(f_1y.result())
+            history_3y = _normalize_index(f_3y.result())
+            history_5y = _normalize_index(f_5y.result())
 
-        name        = info.get("longName") or info.get("shortName") or "Not Available"
-        symbol      = info.get("symbol") or stock.upper()
-        price       = info.get("currentPrice") or info.get("regularMarketPrice") or "Not Available"
-        asset_type  = info.get("quoteType") or "Not Available"
-        raw_expense = info.get("annualReportExpenseRatio") or info.get("netExpenseRatio")
+        name          = info.get("longName") or info.get("shortName") or "Not Available"
+        symbol        = info.get("symbol") or stock.upper()
+        price         = info.get("currentPrice") or info.get("regularMarketPrice") or "Not Available"
+        asset_type    = info.get("quoteType") or "Not Available"
+        raw_expense   = info.get("annualReportExpenseRatio") or info.get("netExpenseRatio")
         expense_ratio = round(raw_expense * 100, 2) if raw_expense else "Not Available"
-        raw_exp     = info.get("longBusinessSummary", "")
-        explanation = (raw_exp[:510] + "...") if len(raw_exp) > 510 else raw_exp or "Not Available"
+        raw_exp       = info.get("longBusinessSummary", "")
+        explanation   = (raw_exp[:510] + "...") if len(raw_exp) > 510 else raw_exp or "Not Available"
 
         return {
-            "suggestions":   suggestions,
             "name":          name,
             "symbol":        symbol,
             "price":         price,
@@ -183,12 +201,13 @@ def get_detail(stock):
             "chart_5y":      make_chart(history_5y, "#fd7e14"),
         }
     except Exception as e:
-        return {"error": f"Could not fetch data: {e}", "suggestions": suggestions}
+        return {"error": f"Could not fetch data: {e}"}
 
 
 @app.route("/")
-def home():
-    return render_template("home.html", suggestions=get_suggestions())
+def index():
+    suggestions = get_suggestions()
+    return render_template("index.html", suggestions=suggestions)
 
 
 @app.route("/api/search", methods=["POST"])
@@ -197,6 +216,8 @@ def api_search():
     if not stock:
         return jsonify({"error": "No stock provided"})
     details = get_detail(stock)
+    if "error" in details:
+        return jsonify(details)
     sentiment_label, sentiment_score = get_sentiment(details.get("symbol", stock))
     details["sentiment_label"] = sentiment_label
     details["sentiment_score"] = sentiment_score
@@ -207,32 +228,45 @@ def api_search():
 def api_historical():
     data       = request.json
     stock      = data.get("stock", "").strip()
-    amount     = float(data.get("amount", 0))
     start_date = data.get("start_date", "")
     end_date   = data.get("end_date", "")
     monthly    = data.get("monthly", False)
 
     if not stock:
         return jsonify({"error": "No stock provided"})
+
+    try:
+        amount = float(data.get("amount", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid amount"})
+
+    if amount <= 0:
+        return jsonify({"error": "Amount must be greater than zero"})
+
     try:
         ticker  = yf.Ticker(stock)
         history = ticker.history(start=start_date, end=end_date)
-        history.index = history.index.tz_localize(None)
+        history = _normalize_index(history)
 
         if history.empty:
             return jsonify({"error": "No data found for the selected date range"})
+
+        if history["Close"].iloc[0] == 0:
+            return jsonify({"error": "Invalid price data for this stock"})
 
         if monthly:
             monthly_history = history.resample("MS").first()
             total_units, total_invested = 0, 0
             for _, row in monthly_history.iterrows():
+                if row["Close"] == 0:
+                    continue
                 total_units    += amount / row["Close"]
                 total_invested += amount
             final_value  = round(total_units * history["Close"].iloc[-1], 2)
             profit       = round(final_value - total_invested, 2)
             buy_price    = round(history["Close"].iloc[0], 2)
             sell_price   = round(history["Close"].iloc[-1], 2)
-            growth_chart = generate_growth_chart_monthly(monthly_history, amount, history["Close"].iloc[-1])
+            growth_chart = generate_growth_chart_monthly(monthly_history, amount)
         else:
             buy_price    = round(history["Close"].iloc[0], 2)
             sell_price   = round(history["Close"].iloc[-1], 2)
@@ -255,22 +289,38 @@ def api_historical():
 
 @app.route("/api/future", methods=["POST"])
 def api_future():
-    data    = request.json
-    stock   = data.get("stock", "").strip()
-    amount  = float(data.get("amount", 0))
-    horizon = int(data.get("horizon", 30))
+    data  = request.json
+    stock = data.get("stock", "").strip()
 
     if not stock:
         return jsonify({"error": "No stock provided"})
 
-    details = get_detail(stock)
-    if "error" in details:
-        return jsonify(details)
+    try:
+        amount  = float(data.get("amount", 0))
+        horizon = int(data.get("horizon", 30))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid amount or horizon"})
 
-    sentiment_label, sentiment_score = get_sentiment(details["symbol"])
-    projected, low, high = calculate_projection(amount, details["return_5y"], sentiment_score, horizon)
+    if amount <= 0:
+        return jsonify({"error": "Amount must be greater than zero"})
 
-    horizon_labels = {7:"1 Week",14:"2 Weeks",30:"1 Month",90:"3 Months",180:"6 Months",365:"1 Year"}
+    if horizon not in [7, 14, 30, 90, 180, 365]:
+        return jsonify({"error": "Invalid horizon value"})
+
+    # Lightweight fetch — only need 5y history for projection
+    try:
+        ticker    = yf.Ticker(stock)
+        history5y = _normalize_index(ticker.history(period="5y"))
+        info      = ticker.info
+        symbol    = info.get("symbol") or stock.upper()
+        return_5y = round(calculate_return(history5y), 2)
+    except Exception as e:
+        return jsonify({"error": f"Could not fetch data: {e}"})
+
+    sentiment_label, sentiment_score = get_sentiment(symbol)
+    projected, low, high = calculate_projection(amount, return_5y, sentiment_score, horizon)
+
+    horizon_labels = {7: "1 Week", 14: "2 Weeks", 30: "1 Month", 90: "3 Months", 180: "6 Months", 365: "1 Year"}
 
     return jsonify({
         "projected":       projected,
@@ -288,6 +338,9 @@ def api_compare():
     stock1 = data.get("stock1", "").strip()
     stock2 = data.get("stock2", "").strip()
 
+    if not stock1 or not stock2:
+        return jsonify({"error": "Both stock symbols are required"})
+
     details1 = get_detail(stock1)
     details2 = get_detail(stock2)
 
@@ -297,8 +350,8 @@ def api_compare():
         return jsonify({"error": details2["error"]})
 
     try:
-        h1 = yf.Ticker(details1["symbol"]).history(period="1y")
-        h2 = yf.Ticker(details2["symbol"]).history(period="1y")
+        h1 = _normalize_index(yf.Ticker(details1["symbol"]).history(period="1y"))
+        h2 = _normalize_index(yf.Ticker(details2["symbol"]).history(period="1y"))
         comparison_chart = generate_comparison_chart(h1, h2, details1["symbol"], details2["symbol"])
     except Exception:
         comparison_chart = None
@@ -317,4 +370,4 @@ def api_compare():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    app.run(debug=os.getenv("FLASK_DEBUG", "false").lower() == "true", port=5001)
