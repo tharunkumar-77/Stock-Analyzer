@@ -165,7 +165,7 @@
 </div>
 
 <!-- Suggestions data passed safely from Flask -->
-<div id="suggestions-data" data-suggestions="{{ suggestions | tojson | e }}" style="display:none"></div>
+<script type="application/json" id="suggestions-data">{{ suggestions | tojson }}</script>
 
 <script>
 let currentSymbol = "";
@@ -201,7 +201,7 @@ async function post(url, body) {
 
 // ── Autocomplete ──────────────────────────────────────────────────────────────
 const allSuggestions = JSON.parse(
-    document.getElementById("suggestions-data").dataset.suggestions || "[]"
+    document.getElementById("suggestions-data").textContent || "[]"
 );
 const searchInput = document.getElementById("search-input");
 const suggestBox  = document.getElementById("suggestions-box");

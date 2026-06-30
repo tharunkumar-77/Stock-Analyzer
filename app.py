@@ -23,6 +23,23 @@ try:
 except Exception:
     _stocks_df = pd.DataFrame(columns=["name", "ticker"])
 
+# Common index name aliases -> Yahoo Finance ticker
+COMMON_INDICES = {
+    "nifty 50": "^NSEI",
+    "nifty50": "^NSEI",
+    "nifty": "^NSEI",
+    "sensex": "^BSESN",
+    "nifty bank": "^NSEBANK",
+    "bank nifty": "^NSEBANK",
+    "nifty it": "^CNXIT",
+    "nifty midcap 100": "^CNXMC",
+    "nifty smallcap 100": "^CNXSC",
+    "nifty next 50": "^NSMIDCP",
+    "nifty 100": "^CNX100",
+    "nifty 200": "^CNX200",
+    "nifty 500": "^CNX500",
+}
+
 
 def get_suggestions():
     return _stocks_df["name"].tolist()
@@ -68,9 +85,9 @@ def calculate_projection(amount, return_5y, sentiment_score, horizon_days):
     years = horizon_days / 365.25
     sentiment_weight = max(0.0, 1.0 - (horizon_days / 365))
     sentiment_nudge = (sentiment_score or 0) * sentiment_weight * 0.05
-    adjusted_rate = max(annual_rate + sentiment_nudge, -0.99)  # floor to avoid nonsensical results
+    adjusted_rate = max(annual_rate + sentiment_nudge, -0.99)
     projected = round(amount * (1 + adjusted_rate) ** years, 2)
-    uncertainty = min(0.5, 0.08 + 0.1 * years)  # more uncertainty for longer horizons
+    uncertainty = min(0.5, 0.08 + 0.1 * years)
     return projected, round(projected * (1 - uncertainty), 2), round(projected * (1 + uncertainty), 2)
 
 
@@ -83,7 +100,6 @@ def _encode_figure(fig):
 
 
 def _normalize_index(history):
-    """Strip timezone from a history DataFrame index safely."""
     if history.index.tz is not None:
         history.index = history.index.tz_convert(None)
     return history
@@ -160,10 +176,15 @@ def generate_comparison_chart(h1, h2, label1, label2):
 
 def get_detail(stock):
     stock = stock.strip()
-    # Resolve name to ticker using cached CSV
-    match = _stocks_df[_stocks_df["name"].str.lower() == stock.lower()]
-    if not match.empty:
-        stock = match.iloc[0]["ticker"]
+    try:
+        if stock.lower() in COMMON_INDICES:
+            stock = COMMON_INDICES[stock.lower()]
+        else:
+            match = _stocks_df[_stocks_df["name"].str.lower() == stock.lower()]
+            if not match.empty:
+                stock = match.iloc[0]["ticker"]
+    except Exception:
+        pass
 
     try:
         ticker = yf.Ticker(stock)
@@ -186,26 +207,29 @@ def get_detail(stock):
         raw_exp       = info.get("longBusinessSummary", "")
         explanation   = (raw_exp[:510] + "...") if len(raw_exp) > 510 else raw_exp or "Not Available"
 
-        return {
-            "name":          name,
-            "symbol":        symbol,
-            "price":         price,
-            "asset_type":    asset_type,
-            "explanation":   explanation,
-            "expense_ratio": expense_ratio,
-            "return_1y":     round(calculate_return(history_1y), 2),
-            "return_3y":     round(calculate_return(history_3y), 2),
-            "return_5y":     round(calculate_return(history_5y), 2),
-            "chart_1y":      make_chart(history_1y, "#0d6efd"),
-            "chart_3y":      make_chart(history_3y, "#6610f2"),
-            "chart_5y":      make_chart(history_5y, "#fd7e14"),
-        }
+        if not history_1y.empty or not history_3y.empty or not history_5y.empty:
+            return {
+                "name":          name,
+                "symbol":        symbol,
+                "price":         price,
+                "asset_type":    asset_type,
+                "explanation":   explanation,
+                "expense_ratio": expense_ratio,
+                "return_1y":     round(calculate_return(history_1y), 2),
+                "return_3y":     round(calculate_return(history_3y), 2),
+                "return_5y":     round(calculate_return(history_5y), 2),
+                "chart_1y":      make_chart(history_1y, "#0d6efd"),
+                "chart_3y":      make_chart(history_3y, "#6610f2"),
+                "chart_5y":      make_chart(history_5y, "#fd7e14"),
+            }
+        else:
+            return {"error": f"No data found for '{stock}'. Check the symbol and try again."}
     except Exception as e:
         return {"error": f"Could not fetch data: {e}"}
 
 
 @app.route("/")
-def index():
+def home():
     suggestions = get_suggestions()
     return render_template("index.html", suggestions=suggestions)
 
@@ -307,12 +331,19 @@ def api_future():
     if horizon not in [7, 14, 30, 90, 180, 365]:
         return jsonify({"error": "Invalid horizon value"})
 
-    # Lightweight fetch — only need 5y history for projection
+    resolved_stock = stock
+    if stock.lower() in COMMON_INDICES:
+        resolved_stock = COMMON_INDICES[stock.lower()]
+    else:
+        match = _stocks_df[_stocks_df["name"].str.lower() == stock.lower()]
+        if not match.empty:
+            resolved_stock = match.iloc[0]["ticker"]
+
     try:
-        ticker    = yf.Ticker(stock)
+        ticker    = yf.Ticker(resolved_stock)
         history5y = _normalize_index(ticker.history(period="5y"))
         info      = ticker.info
-        symbol    = info.get("symbol") or stock.upper()
+        symbol    = info.get("symbol") or resolved_stock.upper()
         return_5y = round(calculate_return(history5y), 2)
     except Exception as e:
         return jsonify({"error": f"Could not fetch data: {e}"})
