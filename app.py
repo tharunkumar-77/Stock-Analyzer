@@ -11,38 +11,51 @@ from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_PATH = os.path.join(BASE_DIR, "stocks.csv")
+
 try:
     from transformers import pipeline
     sentiment_pipe = pipeline("sentiment-analysis", model="ProsusAI/finbert")
 except Exception:
     sentiment_pipe = None
 
-# Cache CSV at startup instead of reading on every request
+# Load CSV once at startup instead of on every request
 try:
-    _stocks_df = pd.read_csv("stocks.csv")
-except Exception:
-    _stocks_df = pd.DataFrame(columns=["name", "ticker"])
-
-# Common index name aliases -> Yahoo Finance ticker
-COMMON_INDICES = {
-    "nifty 50": "^NSEI",
-    "nifty50": "^NSEI",
-    "nifty": "^NSEI",
-    "sensex": "^BSESN",
-    "nifty bank": "^NSEBANK",
-    "bank nifty": "^NSEBANK",
-    "nifty it": "^CNXIT",
-    "nifty midcap 100": "^CNXMC",
-    "nifty smallcap 100": "^CNXSC",
-    "nifty next 50": "^NSMIDCP",
-    "nifty 100": "^CNX100",
-    "nifty 200": "^CNX200",
-    "nifty 500": "^CNX500",
-}
+    _stocks_df = pd.read_csv(CSV_PATH)
+    _stocks_df["name"] = _stocks_df["name"].astype(str)
+    _stocks_df["ticker"] = _stocks_df["ticker"].astype(str)
+except Exception as e:
+    print(f"[WARN] Could not load stocks.csv from {CSV_PATH}: {e}")
+    _stocks_df = pd.DataFrame(columns=["name", "ticker", "category"])
 
 
 def get_suggestions():
     return _stocks_df["name"].tolist()
+
+
+def resolve_ticker(stock):
+    """
+    Resolve user input to a known Indian ticker using ONLY stocks.csv.
+    Tries exact name match, exact ticker match, then partial name match.
+    Returns the ticker string, or None if nothing matches.
+    """
+    if not stock:
+        return None
+    stock_clean = stock.strip().lower()
+
+    exact = _stocks_df[
+        (_stocks_df["name"].str.lower() == stock_clean) |
+        (_stocks_df["ticker"].str.lower() == stock_clean)
+    ]
+    if not exact.empty:
+        return exact.iloc[0]["ticker"]
+
+    partial = _stocks_df[_stocks_df["name"].str.lower().str.contains(stock_clean, na=False, regex=False)]
+    if not partial.empty:
+        return partial.iloc[0]["ticker"]
+
+    return None
 
 
 def get_sentiment(symbol):
@@ -126,8 +139,8 @@ def generate_growth_chart(history, amount):
     fig, ax = plt.subplots(figsize=(6, 2.5))
     ax.plot(history.index, portfolio, color="#198754", linewidth=1.5, label="Portfolio value")
     ax.axhline(y=amount, color="#dc3545", linestyle="--", linewidth=1, label="Invested amount")
-    ax.set_title(f"Growth of ₹{amount:,.0f}")
-    ax.set_ylabel("Portfolio Value (₹)")
+    ax.set_title(f"Growth of \u20b9{amount:,.0f}")
+    ax.set_ylabel("Portfolio Value (\u20b9)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -151,8 +164,8 @@ def generate_growth_chart_monthly(monthly_history, amount):
     fig, ax = plt.subplots(figsize=(6, 2.5))
     ax.plot(monthly_history.index[:len(portfolio_values)], portfolio_values, color="#198754", linewidth=1.5, label="Portfolio value")
     ax.plot(monthly_history.index[:len(total_invested_values)], total_invested_values, color="#dc3545", linestyle="--", linewidth=1, label="Total invested")
-    ax.set_title(f"Monthly SIP Growth (₹{amount:,.0f}/month)")
-    ax.set_ylabel("Value (₹)")
+    ax.set_title(f"Monthly SIP Growth (\u20b9{amount:,.0f}/month)")
+    ax.set_ylabel("Value (\u20b9)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -175,19 +188,17 @@ def generate_comparison_chart(h1, h2, label1, label2):
 
 
 def get_detail(stock):
-    stock = stock.strip()
-    try:
-        if stock.lower() in COMMON_INDICES:
-            stock = COMMON_INDICES[stock.lower()]
-        else:
-            match = _stocks_df[_stocks_df["name"].str.lower() == stock.lower()]
-            if not match.empty:
-                stock = match.iloc[0]["ticker"]
-    except Exception:
-        pass
+    """Look up an Indian stock/ETF/index purely from stocks.csv, then pull data from Yahoo Finance."""
+    stock = (stock or "").strip()
+    if not stock:
+        return {"error": "No stock provided"}
+
+    resolved = resolve_ticker(stock)
+    if not resolved:
+        return {"error": f"'{stock}' was not found in our list of Indian stocks/ETFs."}
 
     try:
-        ticker = yf.Ticker(stock)
+        ticker = yf.Ticker(resolved)
         with ThreadPoolExecutor(max_workers=4) as ex:
             f_info = ex.submit(lambda: ticker.info)
             f_1y   = ex.submit(ticker.history, period="1y")
@@ -199,7 +210,7 @@ def get_detail(stock):
             history_5y = _normalize_index(f_5y.result())
 
         name          = info.get("longName") or info.get("shortName") or "Not Available"
-        symbol        = info.get("symbol") or stock.upper()
+        symbol        = info.get("symbol") or resolved
         price         = info.get("currentPrice") or info.get("regularMarketPrice") or "Not Available"
         asset_type    = info.get("quoteType") or "Not Available"
         raw_expense   = info.get("annualReportExpenseRatio") or info.get("netExpenseRatio")
@@ -223,7 +234,7 @@ def get_detail(stock):
                 "chart_5y":      make_chart(history_5y, "#fd7e14"),
             }
         else:
-            return {"error": f"No data found for '{stock}'. Check the symbol and try again."}
+            return {"error": f"No price data found for '{stock}'. Try a different stock."}
     except Exception as e:
         return {"error": f"Could not fetch data: {e}"}
 
@@ -231,12 +242,13 @@ def get_detail(stock):
 @app.route("/")
 def home():
     suggestions = get_suggestions()
-    return render_template("index.html", suggestions=suggestions)
+    return render_template("home.html", suggestions=suggestions)
 
 
 @app.route("/api/search", methods=["POST"])
 def api_search():
-    stock = request.json.get("stock", "").strip()
+    data = request.get_json(silent=True) or {}
+    stock = data.get("stock", "").strip()
     if not stock:
         return jsonify({"error": "No stock provided"})
     details = get_detail(stock)
@@ -250,7 +262,7 @@ def api_search():
 
 @app.route("/api/historical", methods=["POST"])
 def api_historical():
-    data       = request.json
+    data       = request.get_json(silent=True) or {}
     stock      = data.get("stock", "").strip()
     start_date = data.get("start_date", "")
     end_date   = data.get("end_date", "")
@@ -258,6 +270,8 @@ def api_historical():
 
     if not stock:
         return jsonify({"error": "No stock provided"})
+
+    resolved = resolve_ticker(stock) or stock  # currentSymbol from the frontend is already resolved
 
     try:
         amount = float(data.get("amount", 0))
@@ -268,7 +282,7 @@ def api_historical():
         return jsonify({"error": "Amount must be greater than zero"})
 
     try:
-        ticker  = yf.Ticker(stock)
+        ticker  = yf.Ticker(resolved)
         history = ticker.history(start=start_date, end=end_date)
         history = _normalize_index(history)
 
@@ -313,7 +327,7 @@ def api_historical():
 
 @app.route("/api/future", methods=["POST"])
 def api_future():
-    data  = request.json
+    data  = request.get_json(silent=True) or {}
     stock = data.get("stock", "").strip()
 
     if not stock:
@@ -331,13 +345,7 @@ def api_future():
     if horizon not in [7, 14, 30, 90, 180, 365]:
         return jsonify({"error": "Invalid horizon value"})
 
-    resolved_stock = stock
-    if stock.lower() in COMMON_INDICES:
-        resolved_stock = COMMON_INDICES[stock.lower()]
-    else:
-        match = _stocks_df[_stocks_df["name"].str.lower() == stock.lower()]
-        if not match.empty:
-            resolved_stock = match.iloc[0]["ticker"]
+    resolved_stock = resolve_ticker(stock) or stock  # currentSymbol from frontend is already resolved
 
     try:
         ticker    = yf.Ticker(resolved_stock)
@@ -365,7 +373,7 @@ def api_future():
 
 @app.route("/api/compare", methods=["POST"])
 def api_compare():
-    data   = request.json
+    data   = request.get_json(silent=True) or {}
     stock1 = data.get("stock1", "").strip()
     stock2 = data.get("stock2", "").strip()
 
@@ -373,10 +381,10 @@ def api_compare():
         return jsonify({"error": "Both stock symbols are required"})
 
     details1 = get_detail(stock1)
-    details2 = get_detail(stock2)
-
     if "error" in details1:
         return jsonify({"error": details1["error"]})
+
+    details2 = get_detail(stock2)
     if "error" in details2:
         return jsonify({"error": details2["error"]})
 
